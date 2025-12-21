@@ -122,10 +122,10 @@ def make_spatially_weighted_timeseries(da_ohc):
 
 def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds, depth_bounds=[0, 200]):
     """
-    Fetches Argo data directly from Erddap (Always), processes it, and saves the dataframe with a descriptive filename.
+    Fetches Argo data. Checks local cache first; if missing, downloads from Erddap and saves.
     
     Args:
-        nc_dir (str): Directory where the processed DataFrame will be saved.
+        nc_dir (str): Directory where the processed DataFrame will be saved/loaded.
         start_date, end_date (str): 'YYYY-MM-DD'.
         lat_bounds, lon_bounds (list): [min, max].
         depth_bounds (list): [min, max] in meters.
@@ -133,12 +133,11 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
     Returns:
         pd.DataFrame: Cleaned data [lat, lon, temp, depth, time_days, float_id, date]
     """
-    # 1. SETUP
+    # 1. SETUP & FILENAME GENERATION
     ref_date = pd.to_datetime(start_date)
     os.makedirs(nc_dir, exist_ok=True)
     
-    # GENERATE DESCRIPTIVE FILENAME
-    # Format: argo_START_END_latMIN-MAX_lonMIN-MAX_zMIN-MAX.pkl
+    # Generate Descriptive Filename
     fname = (f"argo_{start_date}_to_{end_date}_"
              f"lat{lat_bounds[0]}_{lat_bounds[1]}_"
              f"lon{lon_bounds[0]}_{lon_bounds[1]}_"
@@ -146,7 +145,18 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
              
     save_path = os.path.join(nc_dir, fname)
 
-    # 2. FETCH DATA (Always)
+    # 2. CHECK LOCAL CACHE
+    if os.path.exists(save_path):
+        print(f"\n📂 FOUND LOCAL DATASET: {save_path}")
+        print("   Loading processed DataFrame...")
+        try:
+            df = pd.read_pickle(save_path)
+            print(f"   ✅ Loaded {len(df)} observations from disk.")
+            return df
+        except Exception as e:
+            print(f"   ⚠️ Error loading cached file (will re-fetch): {e}")
+
+    # 3. FETCH DATA (If not found locally)
     print(f"\n🌊 INITIATING ARGO FETCH (Source: Erddap)")
     print(f"   Target: {start_date} to {end_date}")
     print(f"   Region: Lat {lat_bounds} | Lon {lon_bounds}")
@@ -166,7 +176,7 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
         print(f"   ❌ FETCH FAILED: {e}")
         return pd.DataFrame()
 
-    # 3. PROCESS DATA
+    # 4. PROCESS DATA
     print(f"   🔄 Processing profiles...")
     all_rows = []
     
@@ -283,7 +293,7 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
                 'date': dt
             })
 
-    # 4. SAVE & RETURN
+    # 5. SAVE & RETURN
     df = pd.DataFrame(all_rows)
     print(f"✅ COMPLETE: Loaded {len(df)} valid observations.")
     
