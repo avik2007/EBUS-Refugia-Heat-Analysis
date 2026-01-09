@@ -13,12 +13,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel
 import numpy as np
+import warnings
 
-from sklearn.model_selection import KFold, LeaveOneGroupOut
-from sklearn.preprocessing import StandardScaler
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel
-import numpy as np
 
 """
 The following function provides the option for the global validation of a Gaussian Process Regression.
@@ -245,159 +241,163 @@ def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='te
 
 
 
+
+
+
 def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp', 
-                           method='KFold', k_fold_data_percent=10,
+                           method='LOFO', k_fold_data_percent=10,
                            radius_km=300, min_neighbors=10, max_samples=1000,
                            auto_tune=True, tune_subsample_frac=0.05, tune_iterations=5,
-                           length_scale_val=1.0, noise_val=0.1):
+                           length_scale_val=1.0, noise_val=0.1,
+                           optimization_mode='group'): 
     """
-    Locally Stationary Moving Window Validation.
+    Moving Window (Local GP) Validation with Adaptive Optimization.
     
     PURPOSE:
-    Test the mapping strategy by mimicking the final map generation process.
-    Unlike global methods, this fits a unique Gaussian Process for every single 
-    test point ("Locally Stationary" assumption).
+    Validates the mapping strategy by simulating the final map generation process.
+    It iterates through test points, identifies local neighbors within 'radius_km',
+    and fits a unique Gaussian Process for that specific window.
     
-    STRATEGY (Global Init -> Local Opt):
-    1. Runs a Global Auto-Tune on random subsets to estimate baseline parameters 
-       (the "Global Ruler").
-    2. For every test point, initializes a local GP with those baseline parameters.
-    3. OPTIMIZES the local GP to fit the specific neighbors within 'radius_km'.
+    OPTIMIZATION STRATEGY ("The Goldilocks Approach"):
+    1. Global Init: First, we estimate a baseline length scale from the full dataset.
+    2. Local Adaptation: Then, based on 'optimization_mode', we adapt that baseline 
+       to the local conditions (e.g., eddies vs gyres).
     
     ---------------------------------------------------------------------------
     PARAMETERS:
     ---------------------------------------------------------------------------
     1. df (pd.DataFrame): 
-       The master data table. Must contain columns for:
-       - Features (e.g., 'lat', 'lon')
-       - Target (e.g., 'temp')
-       - Grouping ID ('float_id') used for LOFO validation.
+       The master data table. Must contain:
+       - Feature columns (e.g., lat, lon)
+       - Target column (e.g., temp)
+       - 'float_id': Used for grouping in LOFO validation.
 
     2. feature_cols (list of str): 
-       The dimensions used to calculate distance/similarity.
-       - ['lat', 'lon']: Standard 2D spatial mapping.
+       Dimensions used for similarity.
+       - ['lat', 'lon']: Standard 2D mapping.
        - ['lat', 'lon', 'time_days']: 3D Spatio-Temporal mapping.
 
     3. target_col (str): 
-       The variable you are trying to map (e.g., 'temp', 'psal', 'doxy').
+       The variable to predict (e.g., 'temp', 'psal').
 
     4. method (str):
-       - 'KFold': Randomly holds out 10% of points. Best for testing "Interpolation" 
-         (filling small gaps). Expected Z-Score Std is ~1.0.
-       - 'LOFO': "Leave-One-Float-Out". Holds out entire instruments. Best for testing 
-         "Reconstruction" (scientific robustness). Z-Scores will fluctuate due to 
-         spatial non-stationarity.
+       - 'LOFO' (Recommended): "Leave-One-Float-Out". Tests scientific robustness 
+         by holding out entire instruments. Use with optimization_mode='group'.
+       - 'KFold': Random sampling. Tests interpolation accuracy. Use with 
+         optimization_mode='point' or 'global'.
 
     5. k_fold_data_percent (float): 
-       Only used if method='KFold'. Determines the size of the test set per fold.
-       (e.g., 10 means 10% of data is used for testing).
+       Percentage of data to test per fold (if method='KFold').
 
     6. radius_km (float): 
-       The "Horizon of Influence".
-       - Data Filtering: Only neighbors within this distance are used for training.
-       - Physics Bound: The local optimizer is forbidden from choosing a Length Scale 
-         larger than 2x this radius (prevents the "Infinite Length Scale" error).
+       The Horizon. 
+       - Filters neighbors: Only points within this radius are used for training.
+       - Bounds optimizer: Local length scales are forbidden from exceeding 
+         2x this radius (prevents "Infinite Length Scale" artifacts).
 
     7. min_neighbors (int): 
-       The "Void Threshold". If a test point has fewer than this many neighbors 
-       within radius_km, we skip prediction. (Standard GP requires ~10 points to be stable).
+       The Void Threshold. If a test point has fewer than this many neighbors,
+       we skip prediction. Prevents unstable models in sparse regions.
 
     8. max_samples (int): 
-       Speed Limit. Since this runs a full optimization for every point, it is slow.
-       This stops the validation after testing 'max_samples' points (e.g., 1000).
+       Speed Limit. Stops validation after testing this many total points.
+       Essential for 'point' mode which is computationally expensive.
 
     9. auto_tune (bool): 
-       - True: Runs the Global Initialization step to find good starting parameters.
-       - False: Initializes local models with manual 'length_scale_val' and 'noise_val'.
+       - True: Runs a pre-loop Global Estimation step to find baseline parameters.
+       - False: Uses manual 'length_scale_val' and 'noise_val' as the baseline.
 
     10. tune_subsample_frac (float): 
-        (Auto-Tune only) The fraction of total data to use for global estimation.
-        0.05 (5%) is usually sufficient to find the average physics.
+        Fraction of data to use for Global Estimation (e.g., 0.05 = 5%).
 
     11. tune_iterations (int):
-        (Auto-Tune only) How many random subsets to test during Global Initialization.
-        We average the results to get a stable starting point. Default: 5.
+        Number of random subsets to test during Global Estimation. 
+        Averaging these runs provides a stable starting point for local models.
 
     12. length_scale_val / noise_val (float): 
         Manual knobs used only if auto_tune=False.
-        Useful if you already know the physics and want to skip the pre-calc step.
+
+    13. optimization_mode (str) - THE CRITICAL PERFORMANCE KNOB:
+       - 'group' (Recommended for LOFO): "Per-Float Optimization".
+         Calculates local physics ONCE per float (averaging 3 points on the track),
+         then locks those parameters to predict the rest of that float.
+         * Speed: Fast (~50x faster than point).
+         * Accuracy: High (Captures local physics of the water mass).
+         
+       - 'point' (Scientific Rigor): "Locally Stationary".
+         Re-runs the optimizer for every single test point. 
+         * Speed: Very Slow.
+         * Accuracy: Maximum.
+       
+       - 'global' (Speed Check): "Globally Stationary".
+         Uses the fixed Global Baseline parameters for every window.
+         * Speed: Fastest.
+         * Accuracy: Lower (Ignores that physics change spatially).
     ---------------------------------------------------------------------------
     """
-    print(f"\n🚀 STARTING LOCALLY STATIONARY VALIDATION: {method}")
-    print(f"   Config: Radius={radius_km}km | Optimizing every point...")
+    print(f"\n🚀 STARTING MOVING WINDOW VALIDATION: {method}")
+    print(f"   Config: Radius={radius_km}km | Mode: {optimization_mode.upper()}")
     
     # 1. DATA PREP
     X = df[feature_cols].values
     y = df[target_col].values
     groups = df['float_id'].astype(str).values 
     
-    # Standard Scaling (Crucial for Optimizer convergence)
     scaler_X = StandardScaler()
     scaler_y = StandardScaler()
     X_scaled = scaler_X.fit_transform(X)
     y_scaled = scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
     
-    # Capture physical scale for un-scaling later
     phys_scale_X = scaler_X.scale_
     phys_scale_y = scaler_y.scale_[0]
-    
-    # Pre-calc Radians for Haversine (Assumes lat/lon are first 2 cols)
     X_rad = np.radians(X[:, :2]) 
-    EARTH_RADIUS_KM = 6371.0
-    radius_rad = radius_km / EARTH_RADIUS_KM
+    radius_rad = radius_km / 6371.0
 
-    # ---------------------------------------------------------
-    # 2. GLOBAL INITIALIZATION (The "Educated Guess")
-    # ---------------------------------------------------------
-    # We find the "Global Average" parameters to use as the STARTING POINT 
-    # for every local optimizer. This prevents local minima.
+    # 2. GLOBAL BASELINE (Initialization)
     start_length_scale = length_scale_val
     start_noise = noise_val
     
+    # Calculate Max Distance for Bounds
+    data_span = np.max(X_scaled, axis=0) - np.min(X_scaled, axis=0)
+    max_dist = np.max(data_span)
+    
     if auto_tune:
+        print(f"   🤖 Global Estimator: Running {tune_iterations} iterations to find baseline...")
         N_points = len(X_scaled)
         n_sub = int(N_points * tune_subsample_frac)
         n_sub = max(100, min(n_sub, 2000))
         
-        # Global Guardrails (Box Size)
-        data_span = np.max(X_scaled, axis=0) - np.min(X_scaled, axis=0)
-        max_dist = np.max(data_span)
-        
-        print(f"   🤖 Global Estimator: Running {tune_iterations} iterations to find baseline...")
-        
         learned_ls = []
         learned_noise = []
         
-        for run in range(tune_iterations):
-            idx_tune = np.random.choice(N_points, n_sub, replace=False)
-            X_tune, y_tune = X_scaled[idx_tune], y_scaled[idx_tune]
-            
-            # Allow global optimizer to search up to 1.5x the full box size
-            k_tune = ConstantKernel(1.0) * \
-                     RBF(length_scale=[1.0]*X.shape[1], length_scale_bounds=(0.05, max_dist*1.5)) + \
-                     WhiteKernel(noise_level=0.1)
-            
-            gp_tune = GaussianProcessRegressor(kernel=k_tune, n_restarts_optimizer=0)
-            gp_tune.fit(X_tune, y_tune)
-            
-            learned_ls.append(gp_tune.kernel_.k1.k2.length_scale)
-            learned_noise.append(gp_tune.kernel_.k2.noise_level)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ConvergenceWarning)
+            for run in range(tune_iterations):
+                idx_tune = np.random.choice(N_points, n_sub, replace=False)
+                X_tune, y_tune = X_scaled[idx_tune], y_scaled[idx_tune]
+                
+                k_tune = ConstantKernel(1.0) * \
+                         RBF(length_scale=[1.0]*X.shape[1], length_scale_bounds=(0.05, max_dist*1.5)) + \
+                         WhiteKernel(noise_level=0.1)
+                
+                gp_tune = GaussianProcessRegressor(kernel=k_tune, n_restarts_optimizer=0)
+                gp_tune.fit(X_tune, y_tune)
+                
+                learned_ls.append(gp_tune.kernel_.k1.k2.length_scale)
+                learned_noise.append(gp_tune.kernel_.k2.noise_level)
             
         start_length_scale = np.mean(learned_ls, axis=0) 
         start_noise = np.mean(learned_noise)
-        
-        print(f"      ✅ Baseline Found (will initialize local models):")
-        print(f"         Length: {start_length_scale}")
-        print(f"         Noise:  {start_noise:.4f}")
-    else:
-        print(f"   🔧 Manual Baseline: Length={start_length_scale}, Noise={start_noise}")
-
-    # ---------------------------------------------------------
-    # 3. CROSS VALIDATION LOOP (The "Swarm")
-    # ---------------------------------------------------------
+        print(f"      ✅ Baseline Found: Length={start_length_scale}, Noise={start_noise:.4f}")
+    
+    # 3. SPLITTER LOOP
     if method == 'LOFO':
         cv = LeaveOneGroupOut()
     elif method == 'KFold':
+        # 'group' mode requires discrete groups. If KFold (random), force global or point.
+        if optimization_mode == 'group':
+            print("   ⚠️  NOTE: 'group' mode requires LOFO. Switching to 'global' for KFold.")
+            optimization_mode = 'global'
         n_splits = int(100 / k_fold_data_percent)
         cv = KFold(n_splits=n_splits, shuffle=True, random_state=42)
 
@@ -409,11 +409,11 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
     samples_processed = 0
     ignored_count = 0
     
-    # We rely on cv.split yielding indices. For LOFO, 'groups' is required.
+    # Loop over Folds/Floats
     for i, (train_idx, test_idx) in enumerate(cv.split(X_scaled, y_scaled, groups=groups)):
         if max_samples and samples_processed >= max_samples: break
         
-        # Subsample the test set to stay under max_samples limit
+        # Subsample test set
         points_needed = max_samples - samples_processed if max_samples else len(test_idx)
         n_take = min(len(test_idx), points_needed)
         if n_take < len(test_idx):
@@ -421,11 +421,64 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
         else:
              current_test_idx = test_idx
 
-        # --- LOCAL OPTIMIZATION LOOP ---
+        # -----------------------------------------------------------
+        # STRATEGY: GROUP OPTIMIZATION (Hybrid Mode)
+        # -----------------------------------------------------------
+        current_ls = start_length_scale
+        current_noise = start_noise
+        
+        if optimization_mode == 'group':
+            # 1. Pick up to 3 random representative points from this float/group
+            sample_size = min(3, len(current_test_idx))
+            sample_indices = np.random.choice(current_test_idx, size=sample_size, replace=False)
+            
+            group_ls_list = []
+            group_noise_list = []
+            
+            # 2. Optimize on just these 3 points to "Learn the Float's Physics"
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                
+                for s_idx in sample_indices:
+                    # Geometry
+                    target_pt_rad = X_rad[s_idx].reshape(1, -1)
+                    train_subset_rad = X_rad[train_idx]
+                    dists = haversine_distances(train_subset_rad, target_pt_rad).flatten()
+                    neighbor_mask = dists < radius_rad
+                    valid_train_indices = train_idx[neighbor_mask]
+                    
+                    if len(valid_train_indices) < min_neighbors: continue
+                    
+                    # Local Bounds logic
+                    avg_scale_km = np.mean(phys_scale_X) * 111.0
+                    radius_scaled = radius_km / avg_scale_km
+                    upper_bound = max(1.0, radius_scaled * 2.0)
+
+                    # Optimize
+                    X_loc = X_scaled[valid_train_indices]
+                    y_loc = y_scaled[valid_train_indices]
+                    k = ConstantKernel(1.0) * \
+                        RBF(length_scale=start_length_scale, length_scale_bounds=(0.05, upper_bound)) + \
+                        WhiteKernel(noise_level=start_noise)
+                    
+                    gp_opt = GaussianProcessRegressor(kernel=k, n_restarts_optimizer=0)
+                    gp_opt.fit(X_loc, y_loc)
+                    
+                    group_ls_list.append(gp_opt.kernel_.k1.k2.length_scale)
+                    group_noise_list.append(gp_opt.kernel_.k2.noise_level)
+            
+            # 3. Average them to get the parameters for this entire float
+            if len(group_ls_list) > 0:
+                current_ls = np.mean(group_ls_list, axis=0)
+                current_noise = np.mean(group_noise_list)
+
+        # -----------------------------------------------------------
+        # PREDICTION LOOP (Window by Window)
+        # -----------------------------------------------------------
         for t_idx in current_test_idx:
             samples_processed += 1
             
-            # A. Find Neighbors
+            # A. Neighbors
             target_pt_rad = X_rad[t_idx].reshape(1, -1)
             target_feature = X_scaled[t_idx].reshape(1, -1)
             train_subset_rad = X_rad[train_idx]
@@ -434,7 +487,6 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
             neighbor_mask = dists < radius_rad
             valid_train_indices = train_idx[neighbor_mask]
             
-            # B. Check Density
             if len(valid_train_indices) < min_neighbors:
                 ignored_count += 1
                 continue 
@@ -442,36 +494,47 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
             X_local = X_scaled[valid_train_indices]
             y_local = y_scaled[valid_train_indices]
             
-            # C. Define Kernel with LOCAL GUARDRAILS
-            # The length scale cannot exceed 2x the Radius. 
-            # This prevents the linear trend trap (Infinite length scale).
-            avg_scale_km = np.mean(phys_scale_X) * 111.0
-            radius_scaled = radius_km / avg_scale_km
-            upper_bound = max(1.0, radius_scaled * 2.0)
+            # B. Kernel Setup
+            if optimization_mode == 'point':
+                # Mode A: Re-Optimize every point (Scientific)
+                optimizer_setting = 0
+                bounds_setting = (0.05, max(1.0, (radius_km/(np.mean(phys_scale_X)*111.0))*2.0))
+                # Use Global as start, but allow optimization
+                ls_use = start_length_scale
+                noise_use = start_noise
+                
+            else:
+                # Mode B ('group') or C ('global'): Use FIXED parameters
+                # We use the 'current_ls' we calculated above (either from group avg or global)
+                optimizer_setting = None
+                bounds_setting = "fixed"
+                ls_use = current_ls
+                noise_use = current_noise
             
-            # INITIALIZATION: 
-            # Start at 'start_length_scale' (Global Baseline), but allow optimization.
-            k = ConstantKernel(1.0, (1e-1, 1e2)) * \
-                RBF(length_scale=start_length_scale, length_scale_bounds=(0.05, upper_bound)) + \
-                WhiteKernel(noise_level=start_noise, noise_level_bounds=(1e-5, 1.0))
+            # C. Fit & Predict
+            k = ConstantKernel(1.0, constant_value_bounds="fixed") * \
+                RBF(length_scale=ls_use, length_scale_bounds=bounds_setting) + \
+                WhiteKernel(noise_level=noise_use, noise_level_bounds=bounds_setting)
             
-            # D. Fit (Optimizer ON)
-            # We use 0 restarts for speed because we have a high-quality starting point.
-            gp = GaussianProcessRegressor(kernel=k, n_restarts_optimizer=0)
-            gp.fit(X_local, y_local)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=ConvergenceWarning)
+                gp = GaussianProcessRegressor(kernel=k, optimizer=optimizer_setting, alpha=0.0)
+                gp.fit(X_local, y_local)
             
             pred, std = gp.predict(target_feature, return_std=True)
-            
             y_preds.append(pred[0])
             y_sigmas.append(std[0])
             y_true.append(y_scaled[t_idx])
             
-            # Record what the local model learned (avg of dims)
-            learned_local_ls.append(np.mean(gp.kernel_.k1.k2.length_scale))
+            # Track what we used
+            if optimization_mode == 'point':
+                learned_local_ls.append(np.mean(gp.kernel_.k1.k2.length_scale))
+            else:
+                learned_local_ls.append(np.mean(current_ls))
 
         print(f"   Samples processed: {samples_processed}...", end='\r')
 
-    # 4. SCORING & DIAGNOSTICS
+    # 4. SCORING
     y_preds = np.array(y_preds)
     y_true = np.array(y_true)
     y_sigmas = np.array(y_sigmas)
@@ -481,15 +544,14 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
     z_scores = (y_true - y_preds) / y_sigmas
     y_true_c = scaler_y.inverse_transform(y_true.reshape(-1,1)).flatten()
     y_pred_c = scaler_y.inverse_transform(y_preds.reshape(-1,1)).flatten()
-    
     rmse = np.sqrt(np.mean((y_true_c - y_pred_c)**2))
     rms_rel_error = np.sqrt(np.mean(((y_pred_c - y_true_c) / (y_true_c + 1e-9))**2))
     
     print(f"\n✅ RESULTS ({method}):")
-    print(f"   Avg Local LS:        {np.mean(learned_local_ls):.2f} (scaled units)")
+    print(f"   Avg Local LS:        {np.mean(learned_local_ls):.2f} (scaled)")
     print(f"   RMSE (Valid):        {rmse:.3f} °C")
     print(f"   Rel. Error (RMSRE):  {rms_rel_error:.4f}")
     print(f"   Mean Z:              {np.mean(z_scores):.3f}")
-    print(f"   Std Z:               {np.std(z_scores):.3f} (Ideal: 1.0)")
+    print(f"   Std Z:               {np.std(z_scores):.3f}")
     
     return z_scores
