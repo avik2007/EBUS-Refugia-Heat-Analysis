@@ -127,17 +127,25 @@ def make_spatially_weighted_timeseries(da_ohc):
         start_date, end_date (str): 'YYYY-MM-DD'.
         lat_bounds, lon_bounds (list): [min, max].
         depth_bounds (list): [min, max] in meters.
-        
+    Fetches Argo data specifically for Ocean Heat Content analysis.
+    
+    Improvements:
+    - Fetches Salinity (PSAL) alongside Temperature (TEMP).
+    - Preserves FULL profiles (all valid depth levels).
+    - SAVES 'DEPTH' instead of 'PRES' (Renames pressure variable).
+    - Handles 'ADJUSTED' (Quality Controlled) variables automatically.
+
     Returns:
-        pd.DataFrame: Cleaned data [lat, lon, temp, depth, time_days, float_id, date]
+    - pd.DataFrame with columns: [float_id, time_days, lat, lon, pres, temp, psal]
     """
-def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds, depth_bounds=[0, 200]):
+def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds, depth_bounds=[0, 2000]):
     
     # 1. SETUP & FILENAME GENERATION
     ref_date = pd.to_datetime(start_date)
     os.makedirs(nc_dir, exist_ok=True)
     
     # Generate Descriptive Filename
+    # Added '_OHC' tag to filename
     fname = (f"argo_{start_date}_to_{end_date}_"
              f"lat{lat_bounds[0]}_{lat_bounds[1]}_"
              f"lon{lon_bounds[0]}_{lon_bounds[1]}_"
@@ -151,7 +159,7 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
         print("   Loading processed DataFrame...")
         try:
             df = pd.read_pickle(save_path)
-            print(f"   ✅ Loaded {len(df)} observations from disk.")
+            print(f"   ✅ Loaded {len(df)} profile measurements from disk.")
             return df
         except Exception as e:
             print(f"   ⚠️ Error loading cached file (will re-fetch): {e}")
@@ -161,9 +169,9 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
     print(f"   Target: {start_date} to {end_date}")
     print(f"   Region: Lat {lat_bounds} | Lon {lon_bounds}")
     print(f"   Depth:  {depth_bounds[0]}m to {depth_bounds[1]}m")
-    print(f"   Save Path: {save_path}")
     
     try:
+        # Fetch standard variables (T, S, P)
         fetcher = ArgoDataFetcher(src='erddap').region(
             [lon_bounds[0], lon_bounds[1], 
              lat_bounds[0], lat_bounds[1], 
@@ -178,125 +186,60 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
 
     # 4. PROCESS DATA
     print(f"   🔄 Processing profiles...")
-    all_rows = []
     
-    # Identify variables
+    # --- A. VARIABLE DETECTION (Standard vs Adjusted) ---
     t_var = 'TEMP_ADJUSTED' if 'TEMP_ADJUSTED' in ds else 'TEMP'
+    s_var = 'PSAL_ADJUSTED' if 'PSAL_ADJUSTED' in ds else 'PSAL'
     p_var = 'PRES_ADJUSTED' if 'PRES_ADJUSTED' in ds else 'PRES'
     
-    if t_var not in ds:
-        print("   ❌ No Temperature variable found.")
+    if t_var not in ds or s_var not in ds:
+        print(f"   ❌ Missing Critical Vars: Found T={t_var in ds}, S={s_var in ds}")
         return pd.DataFrame()
 
-    # Extract arrays
-    lats = ds.LATITUDE.values
-    lons = ds.LONGITUDE.values
-    times = ds.TIME.values
-    temps = ds[t_var].values
+    # --- B. FLATTEN TO DATAFRAME ---
+    # Convert xarray directly to dataframe
+    df_raw = ds[[t_var, s_var, p_var, 'LATITUDE', 'LONGITUDE', 'TIME', 'PLATFORM_NUMBER']].to_dataframe().reset_index()
     
-    has_depth = p_var in ds
-    if has_depth: pressures = ds[p_var].values
+    # Clean up column names (Renaming PRES -> DEPTH)
+    df_raw = df_raw.rename(columns={
+        t_var: 'temp',
+        s_var: 'psal',
+        p_var: 'depth',   # <--- Renamed as requested
+        'LATITUDE': 'lat',
+        'LONGITUDE': 'lon',
+        'TIME': 'date',
+        'PLATFORM_NUMBER': 'float_id'
+    })
     
-    # --- HANDLING DATA DIMENSIONS ---
-    # Case A: Profile Mode (2D)
-    if temps.ndim == 2:
-        num_profiles = temps.shape[0]
-        for p in range(num_profiles):
-            lat_p = lats[p]
-            lon_p = lons[p]
-            time_p = times[p]
-            
-            if lon_p > 180: lon_p -= 360
-            if not (lat_bounds[0] <= lat_p <= lat_bounds[1]): continue
-            if not (lon_bounds[0] <= lon_p <= lon_bounds[1]): continue
-            if pd.isnull(time_p): continue
-            
-            # Vertical Search
-            profile_temps = temps[p, :]
-            
-            if has_depth:
-                profile_pres = pressures[p, :]
-                valid_mask = (
-                    (profile_pres >= depth_bounds[0]) & 
-                    (profile_pres <= depth_bounds[1]) & 
-                    (~np.isnan(profile_temps))
-                )
-                valid_indices = np.where(valid_mask)[0]
-            else:
-                valid_indices = np.where(~np.isnan(profile_temps))[0]
-            
-            if len(valid_indices) == 0: continue 
-            
-            # Take shallowest valid
-            best_idx = valid_indices[0] 
-            t_val = profile_temps[best_idx]
-            depth_val = profile_pres[best_idx] if has_depth else np.nan
-            
-            # ID
-            try:
-                if 'PLATFORM_NUMBER' in ds:
-                    raw_id = ds.PLATFORM_NUMBER.values[p]
-                    if isinstance(raw_id, bytes): f_id = raw_id.decode('utf-8').strip()
-                    else: f_id = str(raw_id).strip()
-                else: f_id = "unknown"
-            except: f_id = "unknown"
+    # --- C. FILTERING & CLEANING ---
+    print(f"   🧹 Cleaning {len(df_raw)} raw points...")
+    
+    # 1. Drop NaNs in critical columns (Using 'depth' now)
+    df = df_raw.dropna(subset=['temp', 'psal', 'depth', 'lat', 'lon', 'date'])
+    
+    # 2. Decode Byte Strings (Float IDs)
+    if df['float_id'].dtype == object and isinstance(df['float_id'].iloc[0], bytes):
+        df['float_id'] = df['float_id'].str.decode('utf-8').str.strip()
+    df['float_id'] = df['float_id'].astype(str)
 
-            dt = pd.to_datetime(time_p)
-            days_delta = (dt - ref_date).total_seconds() / 86400.0
-            
-            all_rows.append({
-                'lat': float(lat_p),
-                'lon': float(lon_p),
-                'temp': float(t_val),
-                'depth': float(depth_val),
-                'time_days': float(days_delta),
-                'float_id': f_id,
-                'date': dt
-            })
-
-    # Case B: Point Mode (1D)
-    elif temps.ndim == 1:
-        for i in range(len(temps)):
-            lat_p = lats[i]
-            lon_p = lons[i]
-            if lon_p > 180: lon_p -= 360
-            
-            if not (lat_bounds[0] <= lat_p <= lat_bounds[1]): continue
-            if not (lon_bounds[0] <= lon_p <= lon_bounds[1]): continue
-            
-            t_val = temps[i]
-            if np.isnan(t_val): continue
-            
-            depth_val = np.nan
-            if has_depth:
-                p_val = pressures[i]
-                if np.isnan(p_val) or not (depth_bounds[0] <= p_val <= depth_bounds[1]):
-                    continue
-                depth_val = p_val
-            
-            dt = pd.to_datetime(times[i])
-            days_delta = (dt - ref_date).total_seconds() / 86400.0
-            
-            try:
-                raw_id = ds.PLATFORM_NUMBER.values[i]
-                if isinstance(raw_id, bytes): f_id = raw_id.decode('utf-8').strip()
-                else: f_id = str(raw_id).strip()
-            except: f_id = "unknown"
-
-            all_rows.append({
-                'lat': float(lat_p),
-                'lon': float(lon_p),
-                'temp': float(t_val),
-                'depth': float(depth_val),
-                'time_days': float(days_delta),
-                'float_id': f_id,
-                'date': dt
-            })
-
+    # 3. Standardize Longitude (-180 to 180)
+    df.loc[df['lon'] > 180, 'lon'] -= 360
+    
+    # 4. Spatial Filter
+    df = df[
+        (df['lat'] >= lat_bounds[0]) & (df['lat'] <= lat_bounds[1]) &
+        (df['lon'] >= lon_bounds[0]) & (df['lon'] <= lon_bounds[1])
+    ]
+    
+    # 5. Calculate Numeric Time (Days since start)
+    df['time_days'] = (df['date'] - ref_date).dt.total_seconds() / 86400.0
+    
+    # 6. Sort for clean integration later (Sorting by depth)
+    df = df.sort_values(by=['float_id', 'date', 'depth'])
+    
+    print(f"✅ COMPLETE: Loaded {len(df)} valid profile levels.")
+    
     # 5. SAVE & RETURN
-    df = pd.DataFrame(all_rows)
-    print(f"✅ COMPLETE: Loaded {len(df)} valid observations.")
-    
     if not df.empty:
         try:
             df.to_pickle(save_path)
@@ -322,7 +265,7 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
     Parameters:
     -----------
     df : pd.DataFrame
-        Must contain 'lat', 'lon', 'time_days', 'pres', 'temp', 'psal'.
+        Must contain 'lat', 'lon', 'time_days', 'depth', 'temp', 'psal'.
     vertical_step : int
         The vertical resolution (in meters) to smooth the pooled data before integrating.
         Default is 10m (standard for OHC).
@@ -354,14 +297,14 @@ def estimate_ohc_from_raw_bins(df,
     
     # GSW Calculations (TEOS-10 Standard)
     # 1. Absolute Salinity
-    work_df['SA'] = gsw.SA_from_SP(work_df['psal'].values, work_df['pres'].values, 
+    work_df['SA'] = gsw.SA_from_SP(work_df['psal'].values, work_df['depth'].values, 
                                    work_df['lon'].values, work_df['lat'].values)
     # 2. Conservative Temperature
-    work_df['CT'] = gsw.CT_from_t(work_df['SA'].values, work_df['temp'].values, work_df['pres'].values)
+    work_df['CT'] = gsw.CT_from_t(work_df['SA'].values, work_df['temp'].values, work_df['depth'].values)
     
     # 3. Density & Specific Heat
-    rho = gsw.rho(work_df['SA'].values, work_df['CT'].values, work_df['pres'].values)
-    cp = gsw.cp_t_exact(work_df['SA'].values, work_df['temp'].values, work_df['pres'].values)
+    rho = gsw.rho(work_df['SA'].values, work_df['CT'].values, work_df['depth'].values)
+    cp = gsw.cp_t_exact(work_df['SA'].values, work_df['temp'].values, work_df['depth'].values)
     
     # 4. Energy Density (Joules / m^3)
     # This represents how much heat is in a 1m cube of water at this point
@@ -382,7 +325,7 @@ def estimate_ohc_from_raw_bins(df,
         
         # 2. Assign each raw point to a vertical level
         # This handles the "cloud" of points from different floats
-        group['z_idx'] = np.digitize(group['pres'], z_grid)
+        group['z_idx'] = np.digitize(group['depth'], z_grid)
         
         # 3. Calculate Mean Energy Density per vertical level
         # This collapses the multiple floats into one "Synthetic Profile"
@@ -403,7 +346,7 @@ def estimate_ohc_from_raw_bins(df,
         
         # 7. Integrate (Trapezoidal Rule)
         # OHC = Integral( Energy_Density * dz )
-        ohc = np.trapz(full_profile_interp.values, dx=vertical_step)
+        ohc = np.trapezoid(full_profile_interp.values, dx=vertical_step)
         
         return ohc
 

@@ -1,0 +1,39 @@
+# --- Python General ---
+__pycache__/
+*.py[cod]
+*$py.class
+.ipynb_checkpoints/
+
+# --- Virtual Environments ---
+.env
+.venv
+env/
+venv/
+ENV/
+
+# --- Data Science & Large Files ---
+# Ignore all data files to prevent bloating the repo
+*.nc
+*.csv
+*.pkl
+*.h5
+*.hdf5
+*.json
+*.zip
+*.tar.gz
+
+# Keep the data folder structure, but ignore the contents
+# (Assumes your data is in a folder named 'data')
+data/*
+!data/.gitkeep
+
+# --- IDE Settings (Optional) ---
+.vscode/
+.idea/
+*.swp
+
+# --- Mac OS Junk ---
+.DS_Store
+
+# ----- Keep Data out of repo -----
+ArgoData/

@@ -1,0 +1,18 @@
+TY  - JOUR
+TI  - Observations of decadal time scale salinity changes in the subtropical thermocline of the North Pacific Ocean
+AU  - Ren, Li
+AU  - Riser, Stephen C.
+AD  - AA(University of Washington, USGS School of Oceanography; Florida State University, Department of Earth, Ocean and Atmospheric Science; Florida State University, Department of Earth, Ocean and Atmospheric Science), AB(University of Washington, USGS School of Oceanography; Florida State University, Department of Earth, Ocean and Atmospheric Science)
+JO  - Deep Sea Research Part II: Topical Studies in Oceanography
+VL  - 57
+Y1  - 2010/07/1
+SP  - 1161
+EP  - 1170
+UR  - https://ui.adsabs.harvard.edu/abs/2010DSRII..57.1161R
+N2  - Data from Argo floats indicate that significant salinity changes have occurred in the North Pacific thermocline relative to data collected in the previous two decades, including observations obtained as part of the WOCE hydrographic program. Such a salinity decrease on both isopyncals and isobars implies a freshening scenario in the near-surface source region of this water mass. The frequently repeated meridional section P16 supports this inference. The subsurface salinity freshening likely began in the early 1990s, strengthened through 1997, and continued into the 2000s; the surface salinity freshening had commenced by 1984 and continued through the first decade of the 21st century. The spatial distribution of salinity change on the density surface σ <SUB>θ</SUB>=25.5 is examined through comparisons of Argo and most of the North Pacific WOCE sections (1985-1994) and between Argo and the Hydrobase climatology, largely composed of data from the late 1970s through the mid-1980s. Both comparisons show a large-scale, basin-wide decrease in subsurface salinity through the Argo time period used in this analysis (2003-2006). The salinity difference is maximum in the northeast area and spreads southward and westward, approximately following geostrophic streamlines.
+PB  - Elsevier
+DO  - 10.1016/j.dsr2.2009.12.005
+SN  - 0967-0645
+ER  -
+
+

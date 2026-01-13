@@ -1,0 +1,23 @@
+name: oceanography
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11        # Pinned to 3.11 to avoid the 3.14 alpha issues
+  - numpy
+  - pandas
+  - xarray
+  - netcdf4
+  - h5netcdf           # Often needed for xarray backends
+  - dask               # For parallel computing
+  - cartopy            # For your maps
+  - matplotlib
+  - cmocean            # Standard oceanography colormaps
+  - gsw                # Gibbs SeaWater library
+  - scipy
+  - jupyterlab
+  - scikit-learn
+  - pip:                # To install non-conda packages later
+    - argopy
+    - erddapy
+    - aiohttp
