@@ -12,6 +12,7 @@ from sklearn.model_selection import KFold, LeaveOneGroupOut
 from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel
+from sklearn.model_selection import train_test_split
 import numpy as np
 import warnings
 
@@ -79,11 +80,13 @@ def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='te
        How many times to run the optimizer on random subsets (Default: 5).
        The final parameters are the average of these runs.
 
-    9. length_scale_val (float): 
-       MANUAL knob. Used only if auto_tune=False.
+    9. length_scale_val (float or list): 
+       MANUAL knob in PHYSICAL UNITS (Degrees for Lat/Lon, Days for Time).
+       Used only if auto_tune=False.
        
     10. noise_val (float): 
-       MANUAL knob. Used only if auto_tune=False.
+       MANUAL knob in PHYSICAL UNITS (Variance in Target Units^2).
+       Used only if auto_tune=False.
     ---------------------------------------------------------------------------
     """
     print(f"\n🚀 STARTING GLOBAL VALIDATION: {method}")
@@ -116,8 +119,22 @@ def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='te
     # ---------------------------------------------------------
     # 2. ROBUST AUTO-TUNE STEP
     # ---------------------------------------------------------
-    final_length_scale = length_scale_val
-    final_noise = noise_val
+    
+    # [CHANGED]: Automatically scale Manual Inputs from Physical -> Scaled Space
+    if not auto_tune:
+        # User provided Physical Units (e.g., 2.0 degrees), we need Scaled Units for the Kernel
+        if hasattr(length_scale_val, '__len__'):
+            final_length_scale = np.array(length_scale_val) / phys_scale_X
+        else:
+            final_length_scale = length_scale_val / phys_scale_X
+            
+        # User provided Physical Variance (e.g., 0.1 C^2), we need Scaled Variance
+        # Var_scaled = Var_phys / Var_total
+        final_noise = noise_val / scaler_y.var_
+    else:
+        # Placeholders that will be overwritten by auto-tuner
+        final_length_scale = length_scale_val 
+        final_noise = noise_val
     
     if auto_tune:
         N_points = len(X_scaled)
@@ -158,11 +175,12 @@ def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='te
         final_length_scale = np.mean(learned_ls, axis=0) 
         final_noise = np.mean(learned_noise)
         
+        # Convert back to Physical for Printing
         phys_ls = final_length_scale * phys_scale_X
         phys_noise_sigma = np.sqrt(final_noise) * phys_scale_y
         
         print(f"      ✅ LEARNED HYPERPARAMETERS (Avg of {tune_iterations} runs):")
-        print(f"         Noise (Uncertainty): ±{phys_noise_sigma:.3f} °C")
+        print(f"         Noise (Uncertainty): ±{phys_noise_sigma:.3f} (physical units)")
         print(f"         Correlation Lengths:")
         
         for i, col in enumerate(feature_cols):
@@ -178,7 +196,10 @@ def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='te
             else:
                 print(f"           - {col}: {val:.3f} (unknown units)")
     else:
-        print(f"   🔧 Using Manual Parameters: Length={final_length_scale}, Noise={final_noise}")
+        # [CHANGED]: Updated print statement to show the User's Physical Inputs, not the Scaled Internals
+        print(f"   🔧 Manual Mode: Using Fixed Physical Parameters:")
+        print(f"      - Length Scales: {length_scale_val}")
+        print(f"      - Noise Variance: {noise_val}")
 
     # 3. CHOOSE SPLITTER
     if method == 'LOFO':
@@ -249,7 +270,7 @@ def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='te
     rms_rel_error = np.sqrt(np.mean(rel_error_vector**2))
     
     print(f"\n✅ RESULTS ({method}):")
-    print(f"   RMSE:                {rmse:.3f} °C")
+    print(f"   RMSE:                {rmse:.3f} (units depend on what field you inputted)")
     print(f"   Rel. Error (RMSRE):  {rms_rel_error:.4f} (dimensionless)")
     print(f"   Mean Z:              {np.mean(z_scores):.3f}")
     print(f"   Std Z:               {np.std(z_scores):.3f} (Ideal: 1.0)")
@@ -257,11 +278,330 @@ def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='te
     return {
         "z_scores": z_scores,
         "rmse": rmse,
-        "best_length_scale": final_length_scale, # The winner (Auto or Manual)
-        "best_noise": final_noise                # The winner (Auto or Manual)
+        # [CHANGED]: Return Physical Units (interpretable) instead of Scaled Units
+        "best_length_scale": final_length_scale * phys_scale_X, 
+        "best_noise": final_noise * scaler_y.var_  
     }
 
 
+def analyze_rolling_correlations(df, 
+                                 # --- DATA INPUTS ---
+                                 feature_cols=['lat', 'lon'], 
+                                 target_col='temp',
+                                 time_col='time_days',        
+                                 
+                                 # --- VALIDATION STRATEGY ---
+                                 k_fold_data_percent=10,      
+                                 
+                                 # --- OPTIMIZATION (HYPERPARAMETERS) ---
+                                 auto_tune=True,
+                                 tune_subsample_frac=0.1,     
+                                 tune_iterations=5,           
+                                 length_scale_val=1.0,        
+                                 noise_val=0.1,               
+                                 
+                                 # --- ROLLING WINDOW CONFIG ---
+                                 window_size_days=90, 
+                                 step_size_days=30,
+                                 
+                                 # --- AUTO-CALIBRATION (RELIABILITY CONTROL) ---
+                                 auto_calibrate=True,
+                                 target_z_bounds=(0.9, 1.1),
+                                 target_rmsre=0.05,          
+                                 max_adjust_steps=3
+                                 ):
+    
+    """
+    Performs a "Rolling Window" Gaussian Process analysis to assess how ocean physics 
+    (spatial correlation) and model reliability change over time.
+    
+    This function slides a time window across the dataset. For each window, it:
+    1. Fits a Gaussian Process (GP) to learn the local physics (correlation LENGTH scales).
+    2. Validates the model on a hold-out set to measure accuracy (RMSRE) and reliability (Z-Score).
+    3. (Optional) Automatically adjusts the noise parameter to calibrate the error bars.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        The master dataset. Must contain all columns listed in feature_cols, target_col, and time_col.
+    
+    feature_cols : list of str, default=['lat', 'lon']
+        The dimensions used to calculate similarity (distance). 
+        - For 2D spatial maps: ['lat', 'lon']
+        - For 3D spatiotemporal maps: ['lat', 'lon', 'time_days']
+        
+    target_col : str, default='temp'
+        The variable to be mapped/interpolated (e.g., 'ohc_source', 'psal', 'temp').
+        
+    time_col : str, default='time_days'
+        The column used to SLICE the data into rolling windows. 
+        NOTE: This is distinct from feature_cols. You can slice by time but map only in space.
+        
+    k_fold_data_percent : float, default=10
+        The percentage of data in each window to hide from the model for validation.
+        (e.g., 10 means 10% of points are Test set, 90% are Training set).
+        
+    auto_tune : bool, default=True
+        - True: The GP optimizer is allowed to find the best length_scale and noise_level 
+          (Maximum Likelihood Estimation).
+        - False: The model is forced to use the manual length_scale_val and noise_val. 
+          (Use this to test if a fixed physics model holds up over time).
+          
+    tune_subsample_frac : float, default=0.1
+        (Not currently used in this version but kept for consistency) Fraction of data used for tuning.
+        
+    tune_iterations : int, default=5
+        Number of times to restart the optimizer to avoid local minima. 
+        Maps to 'n_restarts_optimizer'.
+        
+    length_scale_val : float or list, default=1.0
+        - If auto_tune=True: This is the starting guess for the optimizer.
+        - If auto_tune=False: This is the fixed, hard-coded length scale used for all windows.
+          If providing a list, must match len(feature_cols).
+          
+    noise_val : float, default=0.1
+        - If auto_tune=True: This is the starting guess for the noise level (variance).
+        - If auto_tune=False: This is the fixed noise level.
+        
+    window_size_days : int, default=90
+        The duration of data included in one analysis block.
+        (e.g., 90 days captures a seasonal snapshot).
+        
+    step_size_days : int, default=30
+        How far to slide the window forward for the next step.
+        (e.g., 30 days means we produce monthly updates).
+        
+    auto_calibrate : bool, default=True
+        If True, enables the "Feedback Loop". If the model is over/under-confident 
+        (Z-score outside bounds), it adjusts the noise parameter and re-fits 
+        to ensure reliable error bars.
+        
+    target_z_bounds : tuple, default=(0.9, 1.1)
+        The "Goldilocks Zone" for the Standard Deviation of Z-scores.
+        - Ideal is 1.0. 
+        - < 0.9 means the model is paranoid (errors too big).
+        - > 1.1 means the model is arrogant (errors too small).
+        
+    target_rmsre : float, default=0.05
+        The target Root Mean Squared Relative Error (e.g., 0.05 = 5% error).
+        Used to flag "Low Quality" windows in the output.
+        
+    max_adjust_steps : int, default=3
+        Maximum number of calibration loops to run per window to prevent infinite cycles.
+
+    Returns
+    -------
+    results_df : pd.DataFrame
+        Summary statistics for each time window. Columns include:
+        - 'rmse': Root Mean Square Error (Accuracy)
+        - 'rmsre': Relative Error (Quality)
+        - 'std_z': Reliability (Z-score)
+        - 'scale_lat', 'scale_lon': The learned physical correlation lengths.
+        
+    cv_details : dict
+        A dictionary keyed by the window center date (float).
+        Values are DataFrames containing the raw True vs Predicted values for every test point.
+        Useful for deep-dive statistical debugging (e.g., checking for bias).
+    """
+    
+    print(f"🕵️ STARTING ROLLING ANALYSIS")
+    print(f"   Window: {window_size_days}d | Step: {step_size_days}d | Validation: {k_fold_data_percent}%")
+    print(f"   Targets: RMSRE < {target_rmsre} | Z in {target_z_bounds}")
+    
+    # --- 1. SETUP TIMELINE ---
+    t_min = df[time_col].min()
+    t_max = df[time_col].max()
+    history = []     # To store high-level metrics
+    cv_details = {}  # To store raw validation data
+    
+    current_t = t_min
+    
+    # Calculate test_size fraction once (e.g., 10% -> 0.1)
+    test_split_frac = k_fold_data_percent / 100.0
+    
+    # --- 2. MAIN ROLLING LOOP ---
+    # We iterate until the window hits the end of the dataset
+    while current_t < t_max - (window_size_days/2):
+        
+        # A. Slice the Data (The "Moving Horizon")
+        t_end = current_t + window_size_days
+        mask = (df[time_col] >= current_t) & (df[time_col] < t_end)
+        df_slice = df[mask].copy()
+        
+        # Guardrail: Skip windows that are too empty to model safely
+        if len(df_slice) < 30:
+            current_t += step_size_days
+            continue
+            
+        # B. Prepare Feature Matrices
+        X = df_slice[feature_cols].values
+        y = df_slice[target_col].values
+        
+        # Scale Data (Crucial for GP convergence)
+        # Note: We fit a FRESH scaler for every window. This is correct because
+        # we care about variance *within this season*, not global variance.
+        scaler_X = StandardScaler()
+        scaler_y = StandardScaler()
+        X_scaled = scaler_X.fit_transform(X)
+        y_scaled = scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
+        
+        # C. Split Train/Test (In-Window Validation)
+        # We assume interpolation within the window, so random split is valid.
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_scaled, y_scaled, 
+            test_size=test_split_frac, 
+            random_state=42
+        )
+        
+        # --- 3. CONFIGURE KERNEL & PHYSICS ---
+        if auto_tune:
+            # "Scientific Discovery Mode"
+            # We set wide bounds so the optimizer can find the true correlation length
+            # (e.g., is it an Eddy (0.5 deg) or a Current (5.0 deg)?)
+            l_bounds = (1e-2, 1e2) 
+            n_bounds = (1e-5, 1e1)
+            optimizer_restarts = tune_iterations
+        else:
+            # "Verification Mode"
+            # We lock the bounds to "fixed" so the parameters cannot change.
+            l_bounds = "fixed"
+            n_bounds = "fixed"
+            optimizer_restarts = 0
+            
+        # Handle isotropic (scalar) vs anisotropic (list) input for length_scale_val
+        if isinstance(length_scale_val, list):
+            ls_init = length_scale_val 
+        else:
+            ls_init = [length_scale_val] * len(feature_cols)
+
+        # Define the Kernel (Physics Engine)
+        # ConstantKernel handles the signal variance (amplitude)
+        # RBF handles the correlation decay (texture)
+        # WhiteKernel handles the sensor noise (uncertainty)
+        k = ConstantKernel(1.0, constant_value_bounds="fixed") * \
+            RBF(length_scale=ls_init, length_scale_bounds=l_bounds) + \
+            WhiteKernel(noise_level=noise_val, noise_level_bounds=n_bounds)
+            
+        gp = GaussianProcessRegressor(kernel=k, n_restarts_optimizer=optimizer_restarts, alpha=0.0)
+        
+        try:
+            # --- 4. INITIAL FIT ---
+            # Maximize Log-Likelihood to find best physics parameters
+            gp.fit(X_train, y_train)
+            
+            # --- 5. AUTO-CALIBRATION LOOP ---
+            # Even if the physics are right, the noise (error bars) might be wrong.
+            # This loop adjusts the noise until Z-scores are healthy (~1.0).
+            
+            # Logic: Only calibrate if requested AND if we are allowed to tune (auto_tune=True)
+            should_calibrate = auto_calibrate and auto_tune
+            
+            best_rmsre = 999.0
+            best_std_z = 999.0
+            
+            # Capture the learned physics (Length Scales) from the initial fit.
+            # We will LOCK these during calibration. We only want to widen/shrink
+            # the error bars (Noise), not change the shape of the map.
+            current_length_scale = gp.kernel_.k1.k2.length_scale
+            current_noise = gp.kernel_.k2.noise_level
+            
+            # Determine how many passes to make (1 pass if no calibration, else max_steps)
+            steps_to_run = max_adjust_steps + 1 if should_calibrate else 1
+            
+            for step in range(steps_to_run):
+                
+                # a. Predict on Hold-Out Set
+                y_pred, y_std = gp.predict(X_test, return_std=True)
+                
+                # b. Convert to Physical Units (Degrees C, Joules, etc.)
+                y_pred_phys = scaler_y.inverse_transform(y_pred.reshape(-1,1)).flatten()
+                y_test_phys = scaler_y.inverse_transform(y_test.reshape(-1,1)).flatten()
+                y_std_phys = y_std * scaler_y.scale_[0] # Scale sigma appropriately
+                
+                # c. Calculate Accuracy Metric: RMSRE (Relative Error)
+                epsilon = 1e-9 # Avoid division by zero
+                rel_error_vector = (y_pred_phys - y_test_phys) / (y_test_phys + epsilon)
+                rmsre = np.sqrt(np.mean(rel_error_vector**2))
+                
+                # d. Calculate Reliability Metric: Z-Score
+                # Z = (Actual Error) / (Predicted Uncertainty)
+                z_scores = (y_test_phys - y_pred_phys) / (y_std_phys + epsilon)
+                std_z = np.std(z_scores)
+                
+                # e. Check Acceptance Criteria
+                z_ok = (std_z >= target_z_bounds[0]) and (std_z <= target_z_bounds[1])
+                
+                # Stop if targets met, or if it's the last allowed step
+                if (z_ok) or (step == steps_to_run - 1):
+                    best_rmsre = rmsre
+                    best_std_z = std_z
+                    break
+                
+                # f. Feedback Control (Adjust Noise)
+                # If Std Z > 1.0 (Overconfident), we need MORE noise.
+                # Correction Factor ~ Z^2 (since Variance ~ Sigma^2)
+                correction_factor = std_z**2
+                correction_factor = np.clip(correction_factor, 0.5, 2.0) # Dampen to prevent explosions
+                
+                new_noise = current_noise * correction_factor
+                current_noise = new_noise
+                
+                # g. Re-Fit with NEW Noise (but FIXED Length Scales)
+                # optimizer=None ensures we don't waste time re-solving the physics
+                k_calibrated = ConstantKernel(1.0, constant_value_bounds="fixed") * \
+                               RBF(length_scale=current_length_scale, length_scale_bounds="fixed") + \
+                               WhiteKernel(noise_level=new_noise, noise_level_bounds="fixed")
+                
+                gp = GaussianProcessRegressor(kernel=k_calibrated, optimizer=None, alpha=0.0)
+                gp.fit(X_train, y_train)
+                
+            # --- END CALIBRATION LOOP ---
+
+            # --- 6. RECORD RESULTS ---
+            window_center = current_t + (window_size_days/2)
+            
+            # Convert Learned Length Scales back to Physical Units (Degrees/Days)
+            learned_ls_phys = current_length_scale * scaler_X.scale_
+            
+            record = {
+                'window_start': current_t,
+                'window_center': window_center,
+                'rmsre': best_rmsre,
+                'std_z': best_std_z,
+                'noise_val': gp.kernel_.k2.noise_level, # Final calibrated noise
+                'n_points': len(df_slice)
+            }
+            # Save specific dimension scales (Lat vs Lon vs Time)
+            for i, col in enumerate(feature_cols):
+                record[f'scale_{col}'] = learned_ls_phys[i]
+            
+            history.append(record)
+            
+            # Store Raw Data for deep statistical checking
+            cv_details[window_center] = pd.DataFrame({
+                'y_true': y_test_phys, 
+                'y_pred': y_pred_phys, 
+                'rel_err': rel_error_vector,
+                'z_score': z_scores
+            })
+            
+            # --- 7. PRINT STATUS ---
+            # Z-Score Status
+            icon_z = "✅" if (best_std_z >= target_z_bounds[0] and best_std_z <= target_z_bounds[1]) else "⚠️"
+            # Quality Status (RMSRE)
+            icon_qual = "✅" if best_rmsre <= target_rmsre else "❌"
+            
+            print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | {icon_z} Z={best_std_z:.2f}")
+            
+        except Exception as e:
+            print(f"   ❌ Fit Failed for window {int(current_t)}: {e}")
+            
+        # Move sliding window forward
+        current_t += step_size_days
+
+    # --- 8. FINALIZE ---
+    results_df = pd.DataFrame(history)
+    return results_df, cv_details
 
 
 
