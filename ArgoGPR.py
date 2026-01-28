@@ -406,7 +406,7 @@ def analyze_rolling_correlations(df,
     
     print(f"🕵️ STARTING ROLLING ANALYSIS")
     print(f"   Window: {window_size_days}d | Step: {step_size_days}d | Validation: {k_fold_data_percent}%")
-    print(f"   Targets: RMSRE < {target_rmsre} | Z in {target_z_bounds}")
+    print(f"   Targets: RMSRE < {target_rmsre} | Std Z in {target_z_bounds}")
     
     # --- 1. SETUP TIMELINE ---
     t_min = df[time_col].min()

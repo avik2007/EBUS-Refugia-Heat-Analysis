@@ -204,7 +204,7 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
     df_raw = df_raw.rename(columns={
         t_var: 'temp',
         s_var: 'psal',
-        p_var: 'depth',   # <--- Renamed as requested
+        p_var: 'pres',    # <--- CHANGED: Now keeping 'pres' as Pressure (dbar)
         'LATITUDE': 'lat',
         'LONGITUDE': 'lon',
         'TIME': 'date',
@@ -215,7 +215,7 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
     print(f"   🧹 Cleaning {len(df_raw)} raw points...")
     
     # 1. Drop NaNs in critical columns (Using 'depth' now)
-    df = df_raw.dropna(subset=['temp', 'psal', 'depth', 'lat', 'lon', 'date'])
+    df = df_raw.dropna(subset=['temp', 'psal', 'pres', 'lat', 'lon', 'date'])
     
     # 2. Decode Byte Strings (Float IDs)
     if df['float_id'].dtype == object and isinstance(df['float_id'].iloc[0], bytes):
@@ -224,6 +224,10 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
 
     # 3. Standardize Longitude (-180 to 180)
     df.loc[df['lon'] > 180, 'lon'] -= 360
+    
+    # [NEW] Calculate Depth in Meters from Pressure
+    # z_from_p returns height (negative down), so we flip to positive Depth
+    df['depth'] = -1 * gsw.z_from_p(df['pres'].values, df['lat'].values)
     
     # 4. Spatial Filter
     df = df[
@@ -235,7 +239,7 @@ def load_argo_data_advanced(nc_dir, start_date, end_date, lat_bounds, lon_bounds
     df['time_days'] = (df['date'] - ref_date).dt.total_seconds() / 86400.0
     
     # 6. Sort for clean integration later (Sorting by depth)
-    df = df.sort_values(by=['float_id', 'date', 'depth'])
+    df = df.sort_values(by=['float_id', 'date', 'pres'])
     
     print(f"✅ COMPLETE: Loaded {len(df)} valid profile levels.")
     
