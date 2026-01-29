@@ -1,0 +1,14 @@
+conda activate oceanography
+
+code . (for VSCode)
+
+
+Notebook Order
+1. PullArgoData_test.ipynb - first test of loading Argo data
+2. SparsityAudit.ipynb - investigate the sparsity of Argo Data in space 
+3. TestDataLoadAndValidationMethods.ipynb - testing GPR (Gaussian Process Regression) functions developed in ArgoGPR.py
+
+Scripts
+1. ArgoHeatContentDataCollater.py - used for loading data and doing all the thermodynamic calculations needed to convert raw 
+Argo Data for temperature, salt, density, and pressure into heat content. Theoretically, could be extended to other quantities
+2. ArgoGPR.py - Implements Gaussian Process Regression for the Argo Data
