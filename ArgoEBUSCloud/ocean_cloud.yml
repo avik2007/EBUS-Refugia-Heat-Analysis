@@ -1,0 +1,29 @@
+name: ebus-cloud-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # --- Base Scientific Stack (Your Local Tools) ---
+  - python=3.10
+  - pandas
+  - numpy
+  - scipy
+  - scikit-learn
+  - matplotlib
+  - cartopy
+  - gsw              # TEOS-10 Ocean Physics
+  
+  # --- The Pangeo Cloud Stack (The New Additions) ---
+  - xarray           # Multi-dimensional lazy loading
+  - dask             # Distributed compute engine
+  - distributed      # Dask cluster management
+  - zarr             # Cloud-optimized data storage
+  - s3fs             # AWS S3 file system connection
+  - fsspec           # File-system specification (required by s3fs)
+  - netcdf4          # To read legacy Argo files if needed
+  - bottleneck       # Speeds up xarray math
+  
+  # --- Cloud Management ---
+  - pip
+  - pip:
+    - coiled         # "Easy Mode" Dask cluster provisioning
