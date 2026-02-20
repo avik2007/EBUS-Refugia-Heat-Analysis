@@ -16,6 +16,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import gsw
 from datetime import datetime   
+from argopy import DataFetcher as ArgoDataFetcher
 
 def calculate_thermodynamics(sp, t, p, lon, lat):
     """

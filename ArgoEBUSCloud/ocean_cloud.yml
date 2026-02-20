@@ -19,6 +19,7 @@ dependencies:
   - distributed      # Dask cluster management
   - zarr             # Cloud-optimized data storage
   - s3fs             # AWS S3 file system connection
+  - gcsfs            # GCP pythonic file system required by fsspec
   - fsspec           # File-system specification (required by s3fs)
   - netcdf4          # To read legacy Argo files if needed
   - bottleneck       # Speeds up xarray math
