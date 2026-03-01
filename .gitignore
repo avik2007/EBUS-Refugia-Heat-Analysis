@@ -26,6 +26,9 @@ ENV/
 # (Assumes your data is in a folder named 'data')
 data/*
 !data/.gitkeep
+ArgoData/*
+AEResults
+
 
 # --- IDE Settings (Optional) ---
 .vscode/
