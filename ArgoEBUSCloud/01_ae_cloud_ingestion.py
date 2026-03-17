@@ -1,77 +1,76 @@
+"""
+=============================================================================
+VERSION 2.1 UPDATE: Global Scalability & Exact Temporal Slicing
+=============================================================================
+Previous Version: 
+- Hard-coded to the California region for the year 2015.
+- Used static S3 bucket paths and static ERDDAP/Zarr data queries.
+- Resulted in overwriting data if run multiple times.
+
+Current Version: 
+1. Dynamic Registry: Uses `ebus_core.ae_utils` to automatically fetch 
+   regional bounds (Lat/Lon) and specific event windows (exact start/end dates).
+2. Temporal Slicing: Directly slices the time dimension at the source 
+   (Xarray/ERDDAP) to drastically reduce data transfer and processing time.
+3. Automated Precise Naming: Output files now dynamically include the region, 
+   exact dates, and resolution in the filename 
+   (e.g., `california_20150101_20151231_res1.0x1.0.parquet`) 
+   to completely prevent data collisions in the S3 Data Lake.
+=============================================================================
+"""
 import coiled
 from dask.distributed import Client
 import dask.dataframe as dd
 import xarray as xr
 import pandas as pd
-import numpy as np
-import s3fs
+import fsspec       
 import warnings
 import gsw
-# Import YOUR custom physics engine
-from ebus_core.thermodynamics import estimate_ohc_from_raw_bins
+
+# Import from your core library
+from ebus_core.argoebus_thermodynamics import estimate_ohc_from_raw_bins
+from ebus_core.ae_utils import get_ae_config
 
 def process_ebus_cloud_pipeline(
-    lat_bounds, 
-    lon_bounds, 
-    time_bounds,
-    s3_input_uri,
-    s3_output_uri,
-    ref_date='1999-01-01', # The dawn of the Argo era
+    region="california",
+    lat_step=1.0, 
+    lon_step=1.0, 
+    time_step=30.0,
     n_workers=20
 ):
-    """
-    Streams raw Argo Zarr data from AWS, calculates OHC thermodynamics, 
-    and saves the binned results back to cloud storage.
-    """
-    print(f"☁️ Step 1: Requesting Cloud Cluster ({n_workers} workers)...")
+    # 1. FETCH CONFIG (The "Time-Aware" Step)
+    # This pulls start_date/end_date from ae_utils registry
+    config = get_ae_config(region, lat_step=lat_step, lon_step=lon_step, time_step=time_step)
+    
+    # Generate the time-stamped URI for S3
+    output_uri = f"s3://{config['s3_bucket']}/{config['run_id']}_processed.parquet"
+
+    # 2. RENT CLOUD INFRASTRUCTURE
+    print(f"☁️ Step 1: Starting Cluster for {config['run_id']}...")
     cluster = coiled.Cluster(
-        name="argo-ebus-ingestion",
+        name=f"ae-{config['run_id']}",
         n_workers=n_workers,
-        worker_memory="16 GiB",
-        region="us-west-2" 
+        region="eu-west-3", # Paris
+        spot_policy="spot_with_fallback",
     )
     client = Client(cluster)
-    print(f"✅ Cluster Ready! Dashboard: {client.dashboard_link}")
 
-    # Convert ref_date string to timestamp for math later
-    ref_timestamp = pd.to_datetime(ref_date)
+    # 3. CONNECT & SLICE (Temporal Slicing)
+    print(f"🌊 Step 2: Slicing {region} from {config['start_date']} to {config['end_date']}...")
+    input_zarr = "s3://pangeo-forge-argo-v2/argo.zarr"
+    ds = xr.open_zarr(fsspec.get_mapper(input_zarr), consolidated=True)
 
-    print(f"\n🗺️ Step 2: Lazy-Loading AWS Argo Archive from {s3_input_uri}...")
-    fs = s3fs.S3FileSystem(anon=True)
-    store = s3fs.S3Map(root=s3_input_uri, s3=fs, check=False)
-    
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        ds = xr.open_zarr(store, consolidated=True, chunks='auto')
-
-    print(f"\n✂️ Step 3: Slicing the Region (Lazy Evaluation)...")
-    print(f"   Lat: {lat_bounds} | Lon: {lon_bounds} | Time: {time_bounds}")
-    
+    # CRITICAL CHANGE: We now slice by 'time' as well
     ds_ebus = ds.sel(
-        lat=slice(lat_bounds[0], lat_bounds[1]),
-        lon=slice(lon_bounds[0], lon_bounds[1]),
-        time=slice(time_bounds[0], time_bounds[1])
+        lat=slice(config['lat'][0], config['lat'][1]),
+        lon=slice(config['lon'][0], config['lon'][1]),
+        time=slice(config['start_date'], config['end_date']) # Standardized Temporal Slice
     )
 
-    print("\n🌉 Step 4: Converting to Distributed Dask DataFrame...")
-    # Convert multidimensional array to tabular format
-    ddf = ds_ebus[['TEMP', 'PSAL', 'PRES']].to_dask_dataframe(dim_order=['time', 'lat', 'lon'])
+    # 4. DISTRIBUTED PHYSICS
+    ddf = ds_ebus.to_dask_dataframe()
     
-    ddf = ddf.rename(columns={'TEMP': 'temp', 'PSAL': 'psal', 'PRES': 'pres'})
-    ddf = ddf.dropna(subset=['temp', 'psal', 'pres', 'lat', 'lon'])
-
-    # --- EXACT DEPTH CALCULATION (GSW via Dask) ---
-    def calculate_exact_depth(partition):
-        """Helper function applied to each worker's chunk of data"""
-        # gsw.z_from_p returns height (negative down). We multiply by -1 for positive depth.
-        return -1 * gsw.z_from_p(partition['pres'].values, partition['lat'].values)
-    
-    ddf['depth'] = ddf.map_partitions(calculate_exact_depth, meta=('depth', 'float64'))
-    
-    # --- EXACT TIME CALCULATION ---
-    ddf['time_days'] = (ddf['time'] - ref_timestamp).dt.total_seconds() / 86400.0
-
-    print("\n🚀 Step 5: Applying TEOS-10 & Binning across Cloud Computers...")
+    # Metadata for the Dask Workers
     meta = pd.DataFrame({
         'time_bin': pd.Series(dtype='float64'),
         'lat_bin': pd.Series(dtype='float64'),
@@ -81,33 +80,133 @@ def process_ebus_cloud_pipeline(
         'n_raw_points': pd.Series(dtype='int64')
     })
 
+    print(f"⚙️ Step 3: Running thermodynamics on {len(ddf.partitions)} partitions...")
     ddf_binned = ddf.map_partitions(
         estimate_ohc_from_raw_bins, 
-        resolution_lat=1.0, 
-        resolution_lon=1.0, 
-        resolution_time_days=30,
+        resolution_lat=config['resolutions']['lat_step'], 
+        resolution_lon=config['resolutions']['lon_step'], 
+        resolution_time_days=config['resolutions']['time_step'],
         meta=meta
     )
 
-    print(f"\n💾 Step 6: Computing and Saving to {s3_output_uri}...")
-    # Trigger the cluster to do the math and save
-    ddf_binned.to_parquet(s3_output_uri, write_index=False)
+    # 5. SAVE WITH TEMPORAL ID
+    print(f"💾 Step 4: Saving to {output_uri}...")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ddf_binned.to_parquet(output_uri, write_index=False)
     
-    print(f"🎉 SUCCESS! Cleaned OHC Data saved.")
-    
-    # Teardown
+    print(f"🎉 SUCCESS! {config['run_id']} complete.")
     client.close()
-    cluster.close()
+    cluster.shutdown()
 
-# --- EXECUTION BLOCK ---
-if __name__ == '__main__':
-    # You can now cleanly call this with different parameters for different EBUS systems
-    process_ebus_cloud_pipeline(
-        lat_bounds=(20.0, 50.0),
-        lon_bounds=(-135.0, -105.0),
-        time_bounds=('2010-01-01', '2020-12-31'),
-        s3_input_uri='s3://argovis-public-release/argo_zarr_archive',
-        s3_output_uri='s3://my-ebus-data-bucket/california_current_ohc.parquet', # Replace with your bucket/path
-        ref_date='1999-01-01',
-        n_workers=20
+if __name__ == "__main__":
+    process_ebus_cloud_pipeline(region="california", n_workers=3)
+
+# THE OLD VERSION, PULLING STRAIGHT FROM ERDDAP
+"""
+import coiled
+from dask.distributed import Client
+import dask.dataframe as dd
+import xarray as xr
+import pandas as pd
+import fsspec       
+import warnings
+import gsw
+
+# Import your custom ocean physics and utility modules
+from ebus_core.argoebus_thermodynamics import estimate_ohc_from_raw_bins
+from ebus_core.ae_utils import get_ae_config
+
+def process_ebus_cloud_pipeline(
+    region="california",
+    lat_step=1.0, 
+    lon_step=1.0, 
+    time_step=30.0,
+    input_uri="s3://pangeo-forge-argo-v2/argo.zarr", # Default source
+    cloud_provider='aws',  
+    compute_region='eu-west-3', 
+    n_workers=20
+):
+    
+    # Cloud-agnostic ingestion pipeline.- right now, only supports aws, but could in theory do azure or gcp
+    # Uses ae_utils to define regional boundaries while allowing the user
+    # to specify the cloud backend and storage locations.
+    # 
+    
+    # 1. FETCH REGIONAL TRUTHS
+    # Pulls the lat/lon bounds and the default S3 bucket for the chosen region
+    config = get_ae_config(region, lat_step=lat_step, lon_step=lon_step, time_step=time_step)
+    
+    # Build the output path. If you change cloud_provider to 'gcp', 
+    # you would simply pass a 'gs://' URI to this function.
+    output_uri = f"s3://{config['s3_bucket']}/{config['run_id']}_processed.parquet"
+
+    # 2. RENT THE CLOUD COMPUTERS (Agnostic via Coiled)
+    print(f"☁️ Step 1: Requesting {cloud_provider.upper()} Cluster in {compute_region}...")
+    
+    cluster = coiled.Cluster(
+        name=f"ae-{config['run_id']}",
+        backend=cloud_provider,  # This makes it agnostic (aws, gcp, or azure)
+        region=compute_region,   
+        n_workers=n_workers,
+        worker_vm_types=["m5.large", "m4.large", "t3.large"], # AWS types (Coiled maps these to GCP equivalents automatically)
+        spot_policy="spot_with_fallback",
     )
+    
+    client = Client(cluster)
+    print(f"✅ Cluster Ready! Dashboard: {client.dashboard_link}")
+
+    # 3. MAP DATA (Agnostic via fsspec)
+    print(f"🌊 Step 2: Mapping Input Data from {input_uri}...")
+    store = fsspec.get_mapper(input_uri)
+    ds = xr.open_zarr(store, consolidated=True)
+
+    # 4. SPATIAL SLICE
+    # Coordinates come from ae_utils, ensuring consistency across all regions
+    print(f"📍 Step 3: Slicing {region.upper()} boundaries...")
+    ds_ebus = ds.sel(
+        lat=slice(config['lat'][0], config['lat'][1]),
+        lon=slice(config['lon'][0], config['lon'][1])
+    )
+
+    # 5. CONVERT TO DASK & PREP METADATA
+    ddf = ds_ebus.to_dask_dataframe()
+
+    meta = pd.DataFrame({
+        'time_bin': pd.Series(dtype='float64'),
+        'lat_bin': pd.Series(dtype='float64'),
+        'lon_bin': pd.Series(dtype='float64'),
+        'ohc': pd.Series(dtype='float64'),
+        'ohc_per_m': pd.Series(dtype='float64'),
+        'n_raw_points': pd.Series(dtype='int64')
+    })
+
+    # 6. DISTRIBUTED PHYSICS
+    print(f"⚙️ Step 4: Computing Physics (Res: {lat_step}x{lon_step})...")
+    ddf_binned = ddf.map_partitions(
+        estimate_ohc_from_raw_bins, 
+        resolution_lat=config['resolutions']['lat_step'], 
+        resolution_lon=config['resolutions']['lon_step'], 
+        resolution_time_days=config['resolutions']['time_step'],
+        meta=meta
+    )
+
+    # 7. EXECUTE AND SAVE
+    print(f"💾 Step 5: Saving Results to {output_uri}...")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ddf_binned.to_parquet(output_uri, write_index=False)
+    
+    print(f"🎉 SUCCESS! {region.upper()} processing complete.")
+    client.close()
+    cluster.shutdown()
+
+if __name__ == "__main__":
+    # To run for a different region or provider, just change the arguments here:
+    process_ebus_cloud_pipeline(
+        region="california",
+        cloud_provider="aws",
+        lat_step=1.0,
+        lon_step=1.0
+    )
+"""

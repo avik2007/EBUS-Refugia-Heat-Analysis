@@ -1186,7 +1186,9 @@ def analyze_rolling_correlations(df,
             # Quality Status (RMSRE)
             icon_qual = "✅" if best_rmsre <= target_rmsre else "❌"
             
-            print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | {icon_z} Z={best_std_z:.2f}")
+            # Updated to show the density of data in the window
+            n_pts = len(df_slice)
+            print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | {icon_z} Z={best_std_z:.2f} | N={n_pts}")
             
         except Exception as e:
             print(f"   ❌ Fit Failed for window {int(current_t)}: {e}")

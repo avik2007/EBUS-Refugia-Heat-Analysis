@@ -1,0 +1,90 @@
+ArgoEBUSAnalysis/
+│
+├── ArgoEBUSCloud/                          # Cloud-ready production pipeline
+│   ├── 01_ae_cloud_ingestion.py           # Step 1: Ingests Argo data from public S3 zarr
+│   │                                      #   archive using Coiled + Dask for distributed
+│   │                                      #   computing. Runs thermodynamics in parallel
+│   │                                      #   and saves OHC results to S3 as parquet.
+│   │
+│   ├── 02_ae_cloud_run.py                 # Step 1 (alt): Streams Argo data from Ifremer
+│   │                                      #   ERDDAP REST API instead of zarr. Better for
+│   │                                      #   targeted annual runs.
+│   │
+│   ├── 03_ae_inspect_data.py             # Step 2: Downloads processed OHC parquet from
+│   │                                      #   S3 and generates diagnostic PNG plots.
+│   │
+│   ├── test_pipeline.py                   # Integration tests for the cloud pipeline.
+│   │
+│   ├── ocean_cloud.yml                    # Conda environment spec for cloud workers
+│   │                                      #   (pinned dependencies for reproducibility).
+│   │
+│   └── ebus_core/                         # Shared core library (importable module)
+│       ├── __init__.py                    # Makes ebus_core a Python package.
+│       │
+│       ├── ae_utils.py                    # Configuration registry. Defines lat/lon bounds,
+│       │                                  #   S3 bucket paths, and spatial/temporal resolution
+│       │                                  #   for each EBUS region (California, Humboldt,
+│       │                                  #   Canary, Benguela). Also manages output dirs.
+│       │
+│       ├── argoebus_thermodynamics.py     # Ocean physics engine. Uses TEOS-10 (GSW library)
+│       │                                  #   to convert raw T/S/P into heat energy density
+│       │                                  #   (J/m³), then bins and integrates vertically to
+│       │                                  #   produce Ocean Heat Content (OHC) in J/m².
+│       │
+│       ├── argoebus_gp_physics.py         # Gaussian Process Regression engine. Fills spatial
+│       │                                  #   gaps in the Argo float coverage using kriging.
+│       │                                  #   Auto-tunes correlation lengths via K-Fold or
+│       │                                  #   Leave-One-Float-Out cross-validation.
+│       │
+│       └── argoebus_plotting.py           # Visualization functions. Generates Cartopy maps
+│                                          #   of kriging predictions + uncertainty, and
+│                                          #   physics history plots over time.
+│
+├── 1.PullArgoData_test.ipynb              # Notebook: fetches CCS Argo data via argopy,
+│                                          #   interpolates to standard depths, plots profiles.
+│
+├── 2.SparsityAudit.ipynb                  # Notebook: audits float coverage across 1°×1°
+│                                          #   grid. Calculates void percentage to decide
+│                                          #   where GPR is needed vs. simple binning.
+│
+├── 3.GaussianProcessRegressionTesting.ipynb  # Notebook: sandbox for tuning and validating
+│                                             #   GPR hyperparameters and kriging maps.
+│
+├── 4.TestDataLoadAndValidationMethods.ipynb  # Notebook: validates new data loading functions
+│                                             #   from ArgoEBUSCloud end-to-end.
+│
+├── 5.FigureOutOHCFromArgoDFData.ipynb    # Notebook: exploratory OHC calculations.
+│                                          #   Compares DataFrame vs. xarray approaches
+│                                          #   and binned vs. non-binned time series.
+│
+├── ArgoGPR.py                             # Legacy root-level GPR script (predecessor to
+│                                          #   ebus_core/argoebus_gp_physics.py).
+│
+├── ArgoHeatContentDataCollater.py         # Legacy thermodynamics script (predecessor to
+│                                          #   ebus_core/argoebus_thermodynamics.py).
+│
+├── ArgoData/                              # Local cache of downloaded Argo datasets.
+│                                          #   (excluded from git via .gitignore)
+│
+├── AEResults/
+│   ├── aeplots/                           # Output PNGs — e.g., ebus_2015_trend.png
+│   └── aeresults/                         # Output parquet/CSV results files.
+│
+├── CCS_OHC_Deep_GSW.csv                   # Processed OHC result: deep layer (500-1000m)
+│                                          #   for California Current System.
+│
+├── CCS_OHC_Shallow_GSW.csv               # Processed OHC result: shallow layer (0-100m)
+│                                          #   for California Current System.
+│
+├── Map_temp.nc                            # NetCDF file — likely a temp/SST reference map.
+│
+├── References/                            # Scientific literature citations (RIS format)
+│   ├── citationExport-2007jcli1824.1...  # Journal of Climate 2007 paper citation.
+│   ├── export-ris.txt                     # Exported bibliography.
+│   └── pericles_21699291120.ris           # Additional paper reference.
+│
+├── ae_file_structure.txt                  # This file. Visual map of the project layout.
+├── ocean_env_clean.yml                    # Conda environment spec for local development.
+├── startup_guide_argoebus.txt            # Setup/onboarding instructions for new users.
+├── README.md                              # Project overview and documentation.
+└── .gitignore                             # Excludes ArgoData/, __pycache__/, etc.

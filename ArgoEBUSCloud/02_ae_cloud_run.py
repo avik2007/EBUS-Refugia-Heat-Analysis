@@ -1,3 +1,23 @@
+"""
+=============================================================================
+VERSION 2.1 UPDATE: Global Scalability & Exact Temporal Slicing
+=============================================================================
+Previous Version: 
+- Hard-coded to the California region for the year 2015.
+- Used static S3 bucket paths and static ERDDAP/Zarr data queries.
+- Resulted in overwriting data if run multiple times.
+
+Current Version: 
+1. Dynamic Registry: Uses `ebus_core.ae_utils` to automatically fetch 
+   regional bounds (Lat/Lon) and specific event windows (exact start/end dates).
+2. Temporal Slicing: Directly slices the time dimension at the source 
+   (Xarray/ERDDAP) to drastically reduce data transfer and processing time.
+3. Automated Precise Naming: Output files now dynamically include the region, 
+   exact dates, and resolution in the filename 
+   (e.g., `california_20150101_20151231_res1.0x1.0.parquet`) 
+   to completely prevent data collisions in the S3 Data Lake.
+=============================================================================
+"""
 import coiled
 import dask.dataframe as dd
 from dask.distributed import Client
@@ -5,79 +25,90 @@ import pandas as pd
 import warnings
 import gsw
 
-# Import the custom ocean physics module. 
-# Coiled automatically packages this local file and distributes it to the cloud workers.
+# Import your custom ocean physics and regional utilities
 from ebus_core.argoebus_thermodynamics import estimate_ohc_from_raw_bins
+from ebus_core.ae_utils import get_ae_config
 
-def run_cloud_pipeline():
-    print("☁️ Step 1: Provisioning Cloud Infrastructure...")
+def run_cloud_pipeline(
+    region="california",
+    lat_step=1.0, 
+    lon_step=1.0, 
+    time_step=30.0,
+    cloud_provider='aws',
+    compute_region='eu-west-3', # Paris (closest to Ifremer)
+    n_workers=10
+):
+    """
+    API-based ingestion pipeline using Ifremer ERDDAP.
+    Dynamically requests temporal and spatial bounds based on the ae_utils registry.
+    """
     
-    # Allocate a cluster of 10 workers in the AWS Paris region (eu-west-3).
-    # Using 'spot_with_fallback' requests discounted spare AWS capacity to minimize costs.
-    # The m5.large instance type provides 2 CPUs and 8GB of RAM per worker.
+    # --- 1. CONFIGURATION (The Time-Aware Step) ---
+    config = get_ae_config(region="california", lat_step=lat_step, lon_step=lon_step, time_step=time_step,)
+    res = config['resolutions']
+    
+    # Destination path automatically includes the region, dates, and resolutions
+    output_s3 = f"s3://{config['s3_bucket']}/{config['run_id']}.parquet"
+
+    print(f"☁️ Step 1: Provisioning {cloud_provider.upper()} Infrastructure for {config['run_id']}...")
+    
+    # --- 2. CLUSTER SETUP ---
     cluster = coiled.Cluster(
-        name="ebus-production-run",
-        n_workers=10,
-        region="eu-west-3",
+        name=f"ae-erddap-{config['run_id']}",
+        n_workers=n_workers,
+        region=compute_region,
         worker_vm_types=["m5.large", "m4.large", "t3.large"], 
-        scheduler_vm_types=["m5.large", "m4.large","t3.large"],
-        spot_policy="spot_with_fallback" ,
+        spot_policy="spot_with_fallback",
     )
     
-    # Connect the local Python session to the remote Dask scheduler.
     client = Client(cluster)
     print(f"✅ Cloud Cluster Ready! Dashboard: {client.dashboard_link}")
 
-    print("\n🗺️ Step 2: Ingesting Ocean Data...")
+    # --- 3. DYNAMIC API QUERY ---
+    print(f"\n🗺️ Step 2: Requesting {region.upper()} Data ({config['start_date']} to {config['end_date']})...")
     
-    # Define the API endpoint for the French Ifremer ERDDAP server.
-    # The query parameters request a specific spatial bounding box and a 1-year time range.
+    # Reverted URL to only ask for what the server actually has
     erddap_url = (
-        "https://www.ifremer.fr/erddap/tabledap/ArgoFloats.csv?"
-        "time,latitude,longitude,pres,temp,psal"
-        "&latitude>=30.0&latitude<=35.0"
-        "&longitude>=-125.0&longitude<=-120.0"
-        "&time>=2015-01-01T00:00:00Z&time<=2015-12-31T23:59:59Z"
+        f"https://www.ifremer.fr/erddap/tabledap/ArgoFloats.csv?"
+        f"time,latitude,longitude,pres,temp,psal"
+        f"&latitude>={config['lat'][0]}&latitude<={config['lat'][1]}"
+        f"&longitude>={config['lon'][0]}&longitude<={config['lon'][1]}"
+        f"&time>={config['start_date']}T00:00:00Z"
+        f"&time<={config['end_date']}T23:59:59Z"
     )
     
-    # Lazily stream the CSV data. 
-    # blocksize=None is required because the server generates the stream dynamically,
-    # meaning the total file size is unknown prior to reading.
-    ddf = dd.read_csv(
-        erddap_url, 
-        skiprows=[1], # Skip the second row containing string unit descriptors
-        blocksize=None,
-        dtype={'pres': 'float64', 'temp': 'float64', 'psal': 'float64'}
-    )
-
-    # Distribute the single data stream into 20 equal partitions.
-    # This allows the 10 cloud workers to process chunks of the dataset in parallel.
-    ddf = ddf.repartition(npartitions=20)
-
-    print("\n🌉 Step 3: Formatting and Cleaning Data...")
+    # blocksize=None tells Dask to read the live stream without pre-measuring it
+    ddf = dd.read_csv(erddap_url, skiprows=[1], blocksize=None)
     
-    # Standardize coordinate column names.
+    # Split the data into n_workers*3 chunks so that they can share the physics load
+    ddf = ddf.repartition(npartitions=n_workers * 4)
+
+    # --- 4. DATA CLEANING ---
+    print("🌉 Step 3: Formatting and Cleaning Data...")
+    
+    # Rename ERDDAP columns to match the Pangeo standard expected by the physics engine
     ddf = ddf.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
-    
-    # Remove any profiles containing missing sensor data to prevent math errors.
-    ddf = ddf.dropna(subset=['temp', 'psal', 'pres', 'lat', 'lon'])
-    
-    # Enforce UTC timezone awareness on the incoming timestamps.
-    # Calculate the elapsed time in days since the January 1, 1999 baseline.
+
+    # Calculate exact Depth from Pressure using TEOS-10 (gsw)
+    # gsw.z_from_p returns negative values (depth below surface), so we multiply by -1
+    ddf['depth'] = gsw.z_from_p(ddf['pres'], ddf['lat']) * -1
+
+    # Force the incoming ERDDAP strings into strict UTC datetime objects
     ddf['time'] = dd.to_datetime(ddf['time'], utc=True)
-    ddf['time_days'] = (ddf['time'] - pd.to_datetime('1999-01-01', utc=True)).dt.total_seconds() / 86400.0
-
-    # Calculate physical depth (meters) from pressure (dbar) and latitude.
-    # map_partitions applies this calculation across all worker nodes simultaneously.
-    def calculate_exact_depth(partition):
-        return -1 * gsw.z_from_p(partition['pres'].values, partition['lat'].values)
     
-    ddf['depth'] = ddf.map_partitions(calculate_exact_depth, meta=('depth', 'float64'))
-
-    print("\n🚀 Step 4: Distributing Physics Engine (TEOS-10)...")
+    # Give the 1999 baseline a matching UTC timezone so Pandas can do the math
+    baseline = pd.Timestamp('1999-01-01', tz='UTC')
     
-    # Define the expected structure of the final output DataFrame.
-    # Dask requires this 'meta' schema to build the computation graph before executing.
+    # CRITICAL FIX: Name this column 'time_days' exactly as the physics engine expects
+    ddf['time_days'] = (ddf['time'] - baseline).dt.total_seconds() / 86400
+
+    # --- 5. DISTRIBUTED PHYSICS ---
+    # Pull resolutions from our new config object
+    res = config["resolutions"]
+    
+    print(f"🚀 Step 4: Distributing Physics Engine (Res: {res['lat_step']}x{res['lon_step']}, Time: {res['time_step']} days)...")
+    
+    # We define 'meta' so Dask knows the structure of the returned binned data
     meta = pd.DataFrame({
         'time_bin': pd.Series(dtype='float64'),
         'lat_bin': pd.Series(dtype='float64'),
@@ -87,35 +118,140 @@ def run_cloud_pipeline():
         'n_raw_points': pd.Series(dtype='int64')
     })
 
-    # Apply the custom thermodynamics binning function to all 20 partitions in parallel.
+    # We map the physics function across all Dask partitions
     ddf_binned = ddf.map_partitions(
         estimate_ohc_from_raw_bins, 
-        resolution_lat=1.0, 
-        resolution_lon=1.0, 
-        resolution_time_days=30,
+        resolution_lat=res['lat_step'], 
+        resolution_lon=res['lon_step'], 
+        resolution_time_days=res['time_step'], # Passing the dynamic time_step here
         meta=meta
     )
 
-    print("\n💾 Step 5 & 6: Computing and Saving to AWS S3...")
-    
-    # Define the destination path in the private AWS S3 bucket.
-    s3_path = "s3://argo-ebus-project-data-abm/processed_ebus_2015.parquet"
+    # --- 6. EXECUTION ---
+    print(f"\n💾 Step 5 & 6: Computing and Saving to {output_s3}...")
     
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        # Trigger the computation. The cloud workers will download the data,
-        # run the math, and write the output directly to the S3 bucket as a Parquet dataset.
-        ddf_binned.to_parquet(s3_path, write_index=False)
+        ddf_binned.to_parquet(output_s3, write_index=False)
     
-    print(f"\n🎉 SUCCESS! Distributed computing complete. Data saved to: {s3_path}")
+    print(f"\n🎉 SUCCESS! Data saved to: {output_s3}")
     
-    # Fetch a 5-row preview from the completed dataset to display in the local terminal.
-    print(ddf_binned.head())
-    
-    print("\n🛑 Shutting down cloud resources...")
-    # Terminate the client and cluster to halt AWS billing immediately.
     client.close()
-    cluster.close()
+    cluster.shutdown()
 
-if __name__ == '__main__':
-    run_cloud_pipeline()
+if __name__ == "__main__":
+    run_cloud_pipeline(
+        region="california", 
+        lat_step=1.0, 
+        lon_step=1.0, 
+        time_step=30.0,  # Now explicitly supported!
+        n_workers=3
+    )
+"""
+import coiled
+import dask.dataframe as dd
+from dask.distributed import Client
+import pandas as pd
+import warnings
+import gsw
+
+# Import your custom ocean physics and regional utilities
+from ebus_core.argoebus_thermodynamics import estimate_ohc_from_raw_bins
+from ebus_core.ae_utils import get_ae_config
+
+def run_cloud_pipeline(
+    region="california",
+    lat_step=1.0, 
+    lon_step=1.0, 
+    time_step=30.0,
+    cloud_provider='aws',
+    compute_region='eu-west-3', # Default to Paris for Ifremer proximity
+    n_workers=10
+):
+    
+    # API-based ingestion pipeline using Ifremer ERDDAP.
+    # Ideal for smaller, targeted annual runs (e.g., 2015 analysis).
+    
+    
+    # --- 1. CONFIGURATION ---
+    # Fetch the regional bounds and bucket from our source of truth
+    config = get_ae_config(region, lat_step=lat_step, lon_step=lon_step, time_step=time_step)
+    res = config['resolutions']
+    
+    # Destination path is now dynamic based on the region's bucket and the run_id
+    output_s3 = f"s3://{config['s3_bucket']}/{config['run_id']}.parquet"
+
+    print(f"☁️ Step 1: Provisioning {cloud_provider.upper()} Infrastructure for {config['run_id']}...")
+    
+    # --- 2. CLUSTER SETUP ---
+    cluster = coiled.Cluster(
+        name=f"ae-erddap-{config['run_id']}",
+        backend=cloud_provider,
+        n_workers=n_workers,
+        region=compute_region,
+        worker_vm_types=["m5.large", "m4.large", "t3.large"], 
+        spot_policy="spot_with_fallback",
+    )
+    
+    client = Client(cluster)
+    print(f"✅ Cloud Cluster Ready! Dashboard: {client.dashboard_link}")
+
+    # --- 3. DYNAMIC API QUERY ---
+    print(f"\n🗺️ Step 2: Ingesting Ocean Data for {region.upper()}...")
+    
+    # We inject the registry bounds directly into the ERDDAP URL
+    # This ensures the API only sends us the data we actually need.
+    erddap_url = (
+        f"https://www.ifremer.fr/erddap/tabledap/ArgoFloats.csv?"
+        f"time,latitude,longitude,pres,temp,psal"
+        f"&latitude>={config['lat'][0]}&latitude<={config['lat'][1]}"
+        f"&longitude>={config['lon'][0]}&longitude<={config['lon'][1]}"
+        f"&time>=2015-01-01T00:00:00Z&time<=2015-12-31T23:59:59Z"
+    )
+    
+    # Read the CSV stream into a Dask DataFrame
+    ddf = dd.read_csv(erddap_url, skiprows=[1]) # skip the units row
+
+    # --- 4. DATA CLEANING ---
+    print("🌉 Step 3: Formatting and Cleaning Data...")
+    ddf['time'] = dd.to_datetime(ddf['time'])
+    # Calculate days since your 1999 baseline
+    ddf['days_since_1999'] = (ddf['time'] - pd.Timestamp('1999-01-01')).dt.total_seconds() / 86400
+
+    # --- 5. DISTRIBUTED PHYSICS ---
+    print(f"🚀 Step 4: Distributing Physics Engine (Res: {lat_step}x{lon_step})...")
+    
+    meta = pd.DataFrame({
+        'time_bin': pd.Series(dtype='float64'),
+        'lat_bin': pd.Series(dtype='float64'),
+        'lon_bin': pd.Series(dtype='float64'),
+        'ohc': pd.Series(dtype='float64'),
+        'ohc_per_m': pd.Series(dtype='float64'),
+        'n_raw_points': pd.Series(dtype='int64')
+    })
+
+    ddf_binned = ddf.map_partitions(
+        estimate_ohc_from_raw_bins, 
+        resolution_lat=res['lat_step'], 
+        resolution_lon=res['lon_step'], 
+        resolution_time_days=res['time_step'],
+        meta=meta
+    )
+
+    # --- 6. EXECUTION ---
+    print(f"\n💾 Step 5 & 6: Computing and Saving to {output_s3}...")
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        ddf_binned.to_parquet(output_s3, write_index=False)
+    
+    print(f"\n🎉 SUCCESS! Data saved to: {output_s3}")
+    
+    client.close()
+    cluster.shutdown()
+
+if __name__ == "__main__":
+    # Example: Run a higher-res 0.5 degree analysis for the California system
+    run_cloud_pipeline(region="california", lat_step=1.0, lon_step=1.0)
+"""
+

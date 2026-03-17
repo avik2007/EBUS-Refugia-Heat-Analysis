@@ -8,7 +8,6 @@
 
 import numpy as np
 import os
-import argopy
 import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
@@ -16,7 +15,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import gsw
 from datetime import datetime   
-from argopy import DataFetcher as ArgoDataFetcher
+
 
 def calculate_thermodynamics(sp, t, p, lon, lat):
     """
