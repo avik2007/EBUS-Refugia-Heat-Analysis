@@ -37,48 +37,46 @@ def get_ebus_registry():
         }
     }
 
-def get_ae_config(region="california", lat_step=1.0, lon_step=1.0, time_step=30.0, 
-                  start_date=None, end_date=None):
+def get_ae_config(region="california", lat_step=0.5, lon_step=0.5, time_step=30.0, 
+                  depth_range=(0, 100), start_date=None, end_date=None):
     """
-    Fetch configuration for a target study site with dynamic resolutions and dates.
+    Fetch configuration for a target study site with dynamic resolutions and depth.
     Standardizes naming for S3 files and Coiled clusters.
     """
     registry = get_ebus_registry()
     if region not in registry:
         raise ValueError(f"Region '{region}' not found.")
     
-    # CRITICAL: Use .copy() so we don't modify the master registry dictionary in memory
+    # Use .copy() to avoid modifying the global registry dictionary
     config = registry[region].copy()
     
-    # 1. Date Handling
+    # Dates
     config["start_date"] = start_date if start_date else config["time"][0]
     config["end_date"] = end_date if end_date else config["time"][1]
     
-    # 2. Resolution Handling
+    # Resolutions and Depth
     config["resolutions"] = {
         "lat_step": lat_step,
         "lon_step": lon_step,
         "time_step": time_step
     }
+    config["depth_range"] = depth_range
     
-    # 3. Exact Date Formatting (e.g., 20150101)
+    # --- FILENAME GENERATION (run_id) ---
     start_clean = config["start_date"].replace("-", "")
     end_clean = config["end_date"].replace("-", "")
     date_str = f"{start_clean}_{end_clean}"
     
-    # 4. Coiled & S3 Safe Naming
-    # Periods (.) are replaced with underscores (_) to avoid ParseIdentifierErrors
+    # Safe naming: periods to underscores for S3/Coiled compatibility
     lat_safe = str(lat_step).replace(".", "_")
     lon_safe = str(lon_step).replace(".", "_")
     time_safe = str(time_step).replace(".", "_")
+    depth_str = f"d{depth_range[0]}_{depth_range[1]}"
 
-    # Final run_id: e.g., california_20150101_20151231_res1_0x1_0_t30_0
-    # This ensures that a 30-day binning run is named differently than a 7-day binning run
-    config["run_id"] = f"{region}_{date_str}_res{lat_safe}x{lon_safe}_t{time_safe}"
+    # Example: california_20150101_20151231_res0_5x0_5_t30_0_d0_700
+    config["run_id"] = f"{region}_{date_str}_res{lat_safe}x{lon_safe}_t{time_safe}_{depth_str}"
     
-    # 5. Path Attachment
     config["paths"] = get_project_paths()
-    
     return config
 
 
@@ -102,10 +100,12 @@ def get_project_paths():
     }
 
 def ensure_ae_dirs():
-    """Guarantees the /ArgoEBUSAnalysis/AEResults folders exist."""
-    paths = get_project_paths()
-    for key in ["plots", "models"]:
-        os.makedirs(paths[key], exist_ok=True)
+    """Guarantees project directory tree exists."""
+    import os
+    base_dir = "AEResults"
+    for sub in ["aeplots", "aedata", "aelogs"]:
+        path = os.path.join(base_dir, sub)
+        os.makedirs(path, exist_ok=True)
 
 def calculate_bin(value, step):
     """Generic binning helper."""

@@ -948,9 +948,9 @@ Feeds into ag.plot_kriging_snapshot()
     """
 def analyze_rolling_correlations(df, 
                                  # --- DATA INPUTS ---
-                                 feature_cols=['lat_bin', 'lon_bin'], # Adjusted defaults for binned data
-                                 target_col='ohc_per_m',              # Adjusted default target
-                                 time_col='time_bin',                 # Adjusted default time column
+                                 feature_cols=['lat_bin', 'lon_bin'], 
+                                 target_col='ohc_per_m',              
+                                 time_col='time_bin',                 
                                  
                                  # --- VALIDATION STRATEGY ---
                                  k_fold_data_percent=10,      
@@ -969,7 +969,7 @@ def analyze_rolling_correlations(df,
                                  # --- AUTO-CALIBRATION (RELIABILITY CONTROL) ---
                                  auto_calibrate=True,
                                  target_z_bounds=(0.9, 1.1),
-                                 target_rmsre=0.05,          
+                                 target_rmsre=0.05,           
                                  max_adjust_steps=3
                                  ):
     """
@@ -978,28 +978,35 @@ def analyze_rolling_correlations(df,
     
     Compatible with output from 'estimate_ohc_from_raw_bins'.
     """
-    
+    #from sklearn.preprocessing import StandardScaler
+    #from sklearn.model_selection import train_test_split
+    #from sklearn.gaussian_process import GaussianProcessRegressor
+    #from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel
+
     print(f"🕵️ STARTING ROLLING ANALYSIS")
     print(f"   Window: {window_size_days}d | Step: {step_size_days}d | Validation: {k_fold_data_percent}%")
     print(f"   Targets: RMSRE < {target_rmsre} | Std Z in {target_z_bounds}")
     
     # --- 1. SETUP TIMELINE ---
-    # Ensure time column exists
     if time_col not in df.columns:
-        # Fallback for raw data if 'time_bin' is missing but 'time_days' exists
         if 'time_days' in df.columns:
             print(f"   ⚠️ '{time_col}' not found. Using 'time_days' instead.")
             time_col = 'time_days'
         else:
             raise ValueError(f"Time column '{time_col}' not found in dataframe.")
 
-    # Check for feature columns (handle bin vs raw names)
+    # --- NEW: DETECT FLOAT ID FOR AUDIT ---
+    id_col = None
+    for candidate in ['platform_number', 'wmo_id', 'float_id']:
+        if candidate in df.columns:
+            id_col = candidate
+            break
+
     final_features = []
     for col in feature_cols:
         if col in df.columns:
             final_features.append(col)
         elif col.replace('_bin', '') in df.columns:
-            # If 'lat_bin' missing but 'lat' exists, use 'lat'
             alt_col = col.replace('_bin', '')
             print(f"   ⚠️ '{col}' not found. Using '{alt_col}' instead.")
             final_features.append(alt_col)
@@ -1009,46 +1016,31 @@ def analyze_rolling_correlations(df,
 
     t_min = df[time_col].min()
     t_max = df[time_col].max()
-    history = []     # To store high-level metrics
-    cv_details = {}  # To store raw validation data
+    history = []     
+    cv_details = {}  
     
     current_t = t_min
-    
-    # Calculate test_size fraction once (e.g., 10% -> 0.1)
     test_split_frac = k_fold_data_percent / 100.0
     
     # --- 2. MAIN ROLLING LOOP ---
-    # We iterate until the window hits the end of the dataset
     while current_t < t_max - (window_size_days/2):
-        
-        # A. Slice the Data (The "Moving Horizon")
         t_end = current_t + window_size_days
         mask = (df[time_col] >= current_t) & (df[time_col] < t_end)
         df_slice = df[mask].copy()
         
-        # Guardrail: Skip windows that are too empty to model safely
-        # We lower this threshold slightly since binned data is already aggregated
         if len(df_slice) < 10: 
             current_t += step_size_days
             continue
             
-        # B. Prepare Feature Matrices
         X = df_slice[feature_cols].values
         y = df_slice[target_col].values
         
-        # Scale Data (Crucial for GP convergence)
-        # Note: We fit a FRESH scaler for every window. This is correct because
-        # we care about variance *within this season*, not global variance.
         scaler_X = StandardScaler()
         scaler_y = StandardScaler()
         X_scaled = scaler_X.fit_transform(X)
         y_scaled = scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
         
-        # C. Split Train/Test (In-Window Validation)
-        # We assume interpolation within the window, so random split is valid.
         if len(df_slice) < 20:
-             # If very few points, leave-one-out style or just skip test split to avoid errors
-             # For robustness here, we force a minimal split or skip
              if len(df_slice) < 5:
                  current_t += step_size_days
                  continue
@@ -1060,25 +1052,21 @@ def analyze_rolling_correlations(df,
                 random_state=42
             )
         
-        # --- 3. CONFIGURE KERNEL & PHYSICS ---
+        # --- 3. CONFIGURE KERNEL ---
         if auto_tune:
-            # "Scientific Discovery Mode"
             l_bounds = (1e-2, 5) 
             n_bounds = (1e-5, 1e1)
             optimizer_restarts = tune_iterations
         else:
-            # "Verification Mode"
             l_bounds = "fixed"
             n_bounds = "fixed"
             optimizer_restarts = 0
             
-        # Handle isotropic (scalar) vs anisotropic (list) input for length_scale_val
         if isinstance(length_scale_val, list):
             ls_init = length_scale_val 
         else:
             ls_init = [length_scale_val] * len(feature_cols)
 
-        # Define the Kernel (Physics Engine)
         k = ConstantKernel(1.0, constant_value_bounds="fixed") * \
             RBF(length_scale=ls_init, length_scale_bounds=l_bounds) + \
             WhiteKernel(noise_level=noise_val, noise_level_bounds=n_bounds)
@@ -1087,122 +1075,85 @@ def analyze_rolling_correlations(df,
         
         try:
             # --- 4. INITIAL FIT ---
-            # Maximize Log-Likelihood to find best physics parameters
             gp.fit(X_train, y_train)
             
             # --- 5. AUTO-CALIBRATION LOOP ---
-            # Even if the physics are right, the noise (error bars) might be wrong.
-            # This loop adjusts the noise until Z-scores are healthy (~1.0).
-            
-            # Logic: Only calibrate if requested AND if we are allowed to tune (auto_tune=True)
             should_calibrate = auto_calibrate and auto_tune
-            
             best_rmsre = 999.0
             best_std_z = 999.0
             
-            # Capture the learned physics (Length Scales) from the initial fit.
-            # We will LOCK these during calibration. We only want to widen/shrink
-            # the error bars (Noise), not change the shape of the map.
             current_length_scale = gp.kernel_.k1.k2.length_scale
             current_noise = gp.kernel_.k2.noise_level
-            
-            # Determine how many passes to make (1 pass if no calibration, else max_steps)
             steps_to_run = max_adjust_steps + 1 if should_calibrate else 1
             
             for step in range(steps_to_run):
-                
-                # a. Predict on Hold-Out Set
                 y_pred, y_std = gp.predict(X_test, return_std=True)
-                
-                # b. Convert to Physical Units (Degrees C, Joules, etc.)
                 y_pred_phys = scaler_y.inverse_transform(y_pred.reshape(-1,1)).flatten()
                 y_test_phys = scaler_y.inverse_transform(y_test.reshape(-1,1)).flatten()
-                y_std_phys = y_std * scaler_y.scale_[0] # Scale sigma appropriately
+                y_std_phys = y_std * scaler_y.scale_[0] 
                 
-                # c. Calculate Accuracy Metric: RMSRE (Relative Error)
-                epsilon = 1e-9 # Avoid division by zero
+                epsilon = 1e-9 
                 rel_error_vector = (y_pred_phys - y_test_phys) / (y_test_phys + epsilon)
                 rmsre = np.sqrt(np.mean(rel_error_vector**2))
                 
-                # d. Calculate Reliability Metric: Z-Score
-                # Z = (Actual Error) / (Predicted Uncertainty)
                 z_scores = (y_test_phys - y_pred_phys) / (y_std_phys + epsilon)
                 std_z = np.std(z_scores)
                 
-                # e. Check Acceptance Criteria
                 z_ok = (std_z >= target_z_bounds[0]) and (std_z <= target_z_bounds[1])
                 
-                # Stop if targets met, or if it's the last allowed step
                 if (z_ok) or (step == steps_to_run - 1):
                     best_rmsre = rmsre
                     best_std_z = std_z
                     break
                 
-                # f. Feedback Control (Adjust Noise)
-                # If Std Z > 1.0 (Overconfident), we need MORE noise.
-                # Correction Factor ~ Z^2 (since Variance ~ Sigma^2)
-                correction_factor = std_z**2
-                correction_factor = np.clip(correction_factor, 0.5, 2.0) # Dampen to prevent explosions
-                
+                correction_factor = np.clip(std_z**2, 0.5, 2.0)
                 new_noise = current_noise * correction_factor
                 current_noise = new_noise
                 
-                # g. Re-Fit with NEW Noise (but FIXED Length Scales)
-                # optimizer=None ensures we don't waste time re-solving the physics
                 k_calibrated = ConstantKernel(1.0, constant_value_bounds="fixed") * \
                                RBF(length_scale=current_length_scale, length_scale_bounds="fixed") + \
                                WhiteKernel(noise_level=new_noise, noise_level_bounds="fixed")
                 
                 gp = GaussianProcessRegressor(kernel=k_calibrated, optimizer=None, alpha=0.0)
                 gp.fit(X_train, y_train)
-                
-            # --- END CALIBRATION LOOP ---
-
-            # --- 6. RECORD RESULTS ---
-            window_center = current_t + (window_size_days/2)
             
-            # Convert Learned Length Scales back to Physical Units (Degrees/Days)
+            # --- 6. RECORD RESULTS & FLOAT AUDIT ---
+            window_center = current_t + (window_size_days/2)
             learned_ls_phys = current_length_scale * scaler_X.scale_
             
+            # Audit unique floats
+            n_bins = len(df_slice)
+            n_floats = df_slice[id_col].nunique() if id_col else "???"
+
             record = {
                 'window_start': current_t,
                 'window_center': window_center,
                 'rmsre': best_rmsre,
                 'std_z': best_std_z,
-                'noise_val': gp.kernel_.k2.noise_level, # Final calibrated noise
-                'n_points': len(df_slice)
+                'noise_val': current_noise,
+                'n_bins': n_bins,
+                'n_floats': n_floats
             }
-            # Save specific dimension scales (Lat vs Lon vs Time)
             for i, col in enumerate(feature_cols):
                 record[f'scale_{col}'] = learned_ls_phys[i]
             
             history.append(record)
-            
-            # Store Raw Data for deep statistical checking
             cv_details[window_center] = pd.DataFrame({
-                'y_true': y_test_phys, 
-                'y_pred': y_pred_phys, 
-                'rel_err': rel_error_vector,
-                'z_score': z_scores
+                'y_true': y_test_phys, 'y_pred': y_pred_phys, 
+                'rel_err': rel_error_vector, 'z_score': z_scores
             })
             
             # --- 7. PRINT STATUS ---
-            # Z-Score Status
             icon_z = "✅" if (best_std_z >= target_z_bounds[0] and best_std_z <= target_z_bounds[1]) else "⚠️"
-            # Quality Status (RMSRE)
             icon_qual = "✅" if best_rmsre <= target_rmsre else "❌"
             
-            # Updated to show the density of data in the window
-            n_pts = len(df_slice)
-            print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | {icon_z} Z={best_std_z:.2f} | N={n_pts}")
+            print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | {icon_z} Z={best_std_z:.2f} | Bins={n_bins} | Floats={n_floats}")
             
         except Exception as e:
             print(f"   ❌ Fit Failed for window {int(current_t)}: {e}")
             
-        # Move sliding window forward
         current_t += step_size_days
 
-    # --- 8. FINALIZE ---
     results_df = pd.DataFrame(history)
     return results_df, cv_details
 
@@ -1374,7 +1325,7 @@ def plot_kriging_snapshot(df_raw,
     ax2.scatter(df_window[feature_cols[1]], df_window[feature_cols[0]], c='green', s=15, marker='o', alpha=0.3)
     ax2.set_title(f"Uncertainty Map")
     
-    plt.show()
+    #plt.show()
 
 
 """

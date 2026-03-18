@@ -1,98 +1,104 @@
 """
 =============================================================================
-VERSION 4.0: The Complete Diagnostic Pipeline
+VERSION 4.1: The Response Layer Diagnostic (0-100m)
 =============================================================================
-This script downloads binned thermodynamic data from AWS and passes it 
-through the full Rolling Correlation analysis to extract the physical 
-length scales of the marine heatwave over time. It then visualizes the 
-model's reliability and maps a specific snapshot in time.
+1. Depth Awareness: Now specifically targets the 0-100m 'Response Layer' files.
+2. Storyboard Export: Automatically saves Kriging snapshots to AEResults/aeplots.
+3. High-Res Compatibility: Matches the 0.5° granularity of the cloud ingestion.
 =============================================================================
 """
 
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import os
-# Import the core registry to dynamically find your data
 from ebus_core.ae_utils import get_ae_config, ensure_ae_dirs
-# Import your newly completed GP physics pipeline
 from ebus_core.argoebus_gp_physics import (
-    analyze_rolling_correlations,
-    plot_physics_history,
+    analyze_rolling_correlations, 
+    plot_physics_history, 
     plot_kriging_snapshot
 )
 
-def run_diagnostic_inspection(region="california", lat_step=1.0, lon_step=1.0, time_step=30.0):
-    # --- 1. FETCH CONFIGURATION & DATA ---
-    config = get_ae_config(region=region, lat_step=lat_step, lon_step=lon_step, time_step=time_step)
+def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5, 
+                              time_step=30.0, depth_range=(0, 100)):
+    # --- 1. SETUP & HOUSEKEEPING ---
+    # Fetch config that matches the 0-100m depth naming
+    config = get_ae_config(
+        region=region, 
+        lat_step=lat_step, 
+        lon_step=lon_step, 
+        time_step=time_step,
+        depth_range=depth_range
+    )
+    
+    # Ensure AEResults/aeplots exists
+    ensure_ae_dirs()
+    plot_dir = os.path.join("AEResults", "aeplots")
+    
+    print(f"📥 Loading Response Layer Dataset: {config['run_id']}...")
     s3_uri = f"s3://{config['s3_bucket']}/{config['run_id']}.parquet"
     
-    print(f"\n📥 Step 1: Connecting to AWS Data Lake...")
-    print(f"   Target: {s3_uri}")
     try:
         df = pd.read_parquet(s3_uri)
-    except FileNotFoundError:
-        print(f"❌ Error: Could not find dataset. Run ingestion first.")
+        print(f"✅ Data loaded! Shape: {df.shape}")
+    except Exception as e:
+        print(f"❌ Could not find file in S3. Did Script 02 finish? Error: {e}")
         return
-    print(f"✅ Data loaded! Shape: {df.shape}")
 
-    # --- 2. THE ROLLING OPTIMIZATION ENGINE ---
-    print("\n🧮 Step 2: Engaging the Spatio-Temporal Physics Engine...")
-    print("   (This will slide a 60-day window across 2015, tuning the math at every step)")
-    
+    # --- 2. ROLLING PHYSICS ANALYSIS ---
+    # We use a 30d window to capture the 'fast' response layer physics
+    print(f"🧮 Engaging Physics Engine (Window: 30d, Step: 15d)...")
     results_df, cv_details = analyze_rolling_correlations(
         df=df,
         feature_cols=['lat_bin', 'lon_bin'],
         target_col='ohc_per_m',
         time_col='time_bin',
-        window_size_days=30,      # Analyze a 2-month chunk at a time
-        step_size_days=15,        # Step forward 1 month at a time
-        k_fold_data_percent=15,   # Hold out 15% of the data to prove the model works
-        auto_tune=True,           # Find the true physical length scales
-        auto_calibrate=True       # Guarantee the Z-Scores hit the Goldilocks zone
+        window_size_days=30,  
+        step_size_days=15,
+        auto_tune=True
     )
 
-    # --- 3. THE DIAGNOSTIC DASHBOARD ---
-    print("\n📊 Step 3: Generating Physics History Dashboard...")
-    print("   Close the popup window to proceed to the map.")
-    plot_physics_history(results_df, cv_details=cv_details, time_unit='days since 1999')
-
-    # --- 4. SYSTEMATIC MAPPING ---
-    print("\n🗺️ Step 4: Generating Storyboard of all Analysis Windows...")
-    ensure_ae_dirs()
-    plot_dir = config['paths']['plots']
-
+    # --- 3. SAVE STORYBOARD TO AEResults/aeplots ---
+    # --- 3. SAVE STORYBOARD ---
+    # Ensure absolute pathing for safety
+    plot_dir = os.path.abspath(os.path.join("AEResults", "aeplots"))
+    os.makedirs(plot_dir, exist_ok=True)
+    
+    print(f"🗺️ Generating Storyboard in: {plot_dir}")
+    
     for target_t in results_df['window_center']:
-        print(f"   Mapping window centered at Day {target_t:.1f}...")
-        
-        # We call your snapshot function
-        plot_kriging_snapshot(
-            df_raw=df,
-            results_df=results_df,
+        # 1. Generate the figure
+        # Make sure plot_kriging_snapshot is updated to NOT call plt.show()
+        fig = plot_kriging_snapshot(
+            df_raw=df, 
+            results_df=results_df, 
             target_date=target_t,
-            feature_cols=['lat_bin', 'lon_bin'],
-            target_col='ohc_per_m',
-            time_col='time_bin',
-            window_size_days=60,
-            grid_res=0.5
+            feature_cols=['lat_bin', 'lon_bin'], 
+            time_col='time_bin', 
+            grid_res=0.25
         )
         
-        # Save the figure with a descriptive name
-        out_file = os.path.join(plot_dir, f"snapshot_{config['run_id']}_day{int(target_t)}.png")
-        plt.savefig(out_file, dpi=150, bbox_inches='tight')
-        plt.close() # Crucial to prevent memory leaks
-
-    print(f"\n🎉 STORYBOARD COMPLETE! Check your plots folder: {plot_dir}")
+        # 2. Save explicitly using the figure object or the current active plot
+        snapshot_name = f"snapshot_{config['run_id']}_day{int(target_t)}.png"
+        save_path = os.path.join(plot_dir, snapshot_name)
+        
+        print(f"   💾 Saving: {snapshot_name}")
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        
+        # 3. Clear the plot from memory so they don't stack on top of each other
+        plt.clf() 
+        plt.close('all')
+    print(f"\n🎉 PIPELINE COMPLETE! Check {plot_dir} for results.")
 
 if __name__ == "__main__":
-    # Ensure this matches exactly what you ran in 02_ae_cloud_run.py
+    # --- MATCHING THE 0.5 DEGREE 100M RUN ---
     run_diagnostic_inspection(
-        region="california", 
-        lat_step=1.0, 
-        lon_step=1.0, 
-        time_step=30.0
+        region="california",
+        lat_step=0.5,
+        lon_step=0.5,
+        time_step=30.0,
+        depth_range=(0, 100)
     )
-
-
 
 """
 import pandas as pd
