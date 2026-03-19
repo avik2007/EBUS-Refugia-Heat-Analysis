@@ -1117,7 +1117,7 @@ def analyze_rolling_correlations(df,
                 gp = GaussianProcessRegressor(kernel=k_calibrated, optimizer=None, alpha=0.0)
                 gp.fit(X_train, y_train)
             
-            # --- 6. RECORD RESULTS & FLOAT AUDIT ---
+            # --- 6. RECORD RESULTS, FLOAT AUDIT, & ANISOTROPY ---
             window_center = current_t + (window_size_days/2)
             learned_ls_phys = current_length_scale * scaler_X.scale_
             
@@ -1134,21 +1134,36 @@ def analyze_rolling_correlations(df,
                 'n_bins': n_bins,
                 'n_floats': n_floats
             }
+            
+            # Save specific dimension scales (Lat vs Lon)
             for i, col in enumerate(feature_cols):
                 record[f'scale_{col}'] = learned_ls_phys[i]
             
+            # --- NEW: ANISOTROPY AUDIT ---
+            # Calculates the ratio of the Latitudinal scale to the Longitudinal scale.
+            # In EBUS regions:
+            # Ratio > 1.0: Flow-dominated (long-range memory along the coast)
+            # Ratio < 1.0: Eddy-dominated (zonal heterogeneity/atmospheric interference)
+            lat_key = next((c for c in feature_cols if 'lat' in c), None)
+            lon_key = next((c for c in feature_cols if 'lon' in c), None)
+            
+            if lat_key and lon_key:
+                l_lat = record[f'scale_{lat_key}']
+                l_lon = record[f'scale_{lon_key}']
+                record['anisotropy_ratio'] = l_lat / l_lon
+            else:
+                record['anisotropy_ratio'] = np.nan
+
             history.append(record)
-            cv_details[window_center] = pd.DataFrame({
-                'y_true': y_test_phys, 'y_pred': y_pred_phys, 
-                'rel_err': rel_error_vector, 'z_score': z_scores
-            })
             
             # --- 7. PRINT STATUS ---
             icon_z = "✅" if (best_std_z >= target_z_bounds[0] and best_std_z <= target_z_bounds[1]) else "⚠️"
             icon_qual = "✅" if best_rmsre <= target_rmsre else "❌"
             
-            print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | {icon_z} Z={best_std_z:.2f} | Bins={n_bins} | Floats={n_floats}")
-            
+            # Added Anisotropy to the terminal feedback
+            print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | "
+                  f"{icon_z} Z={best_std_z:.2f} | Bins={n_bins} | Floats={n_floats} | "
+                  f"Ratio={record['anisotropy_ratio']:.2f}")
         except Exception as e:
             print(f"   ❌ Fit Failed for window {int(current_t)}: {e}")
             
@@ -1311,7 +1326,7 @@ def plot_kriging_snapshot(df_raw,
     mesh1 = ax1.pcolormesh(LON, LAT, y_pred, transform=ccrs.PlateCarree(), cmap=cmap, shading='auto')
     plt.colorbar(mesh1, ax=ax1, label=target_col)
     ax1.scatter(df_window[feature_cols[1]], df_window[feature_cols[0]], c='green', s=15, marker='x', alpha=0.5, label='Argo Profiles')
-    ax1.set_title(f"Predicted Map (Window Center: {center_val:.0f})")
+    ax1.set_title(f"Predicted Map (Window Center (months since 1999-01-01): {center_val:.0f})")
 
     # --- PLOT B: UNCERTAINTY ---
     ax2 = fig.add_subplot(1, 2, 2, projection=ccrs.PlateCarree())
@@ -1327,6 +1342,9 @@ def plot_kriging_snapshot(df_raw,
     
     #plt.show()
     return fig
+
+
+
 
 
 """
