@@ -12,6 +12,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+import gc
 from ebus_core.ae_utils import get_ae_config, ensure_ae_dirs
 from ebus_core.argoebus_gp_physics import (
     analyze_rolling_correlations, 
@@ -59,16 +60,21 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
     )
 
     # --- 3. SAVE STORYBOARD TO AEResults/aeplots ---
-    # --- 3. SAVE STORYBOARD ---
-    # Ensure absolute pathing for safety
-    plot_dir = os.path.abspath(os.path.join("AEResults", "aeplots"))
-    os.makedirs(plot_dir, exist_ok=True)
+    # --- 3. SAVE STORYBOARD (NUCLEAR OPTION) ---
+
+
+    # 1. Force Absolute Pathing
+    # This ensures it goes to the EXACT folder regardless of where you run the script
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    plot_dir = os.path.join(base_path, "AEResults", "aeplots")
     
-    print(f"🗺️ Generating Storyboard in: {plot_dir}")
+    if not os.path.exists(plot_dir):
+        os.makedirs(plot_dir, exist_ok=True)
+    
+    print(f"📌 HARD-CODED DESTINATION: {plot_dir}")
     
     for target_t in results_df['window_center']:
-        # 1. Generate the figure
-        # Make sure plot_kriging_snapshot is updated to NOT call plt.show()
+        # Generate the figure
         fig = plot_kriging_snapshot(
             df_raw=df, 
             results_df=results_df, 
@@ -78,17 +84,49 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
             grid_res=0.25
         )
         
-        # 2. Save explicitly using the figure object or the current active plot
+        
+        if fig is None:
+            print(f"   ⚠️  SKIPPED: Not enough data in window {int(target_t)}")
+            continue
+
+        # 2. CONSTRUCT DESCRIPTIVE FILENAME
+        # Use config['run_id'] which contains: california_20150101_20151231_res0_5x0_5_t30_0_d0_100
         snapshot_name = f"snapshot_{config['run_id']}_day{int(target_t)}.png"
-        save_path = os.path.join(plot_dir, snapshot_name)
+        holding_folder_name = f"snapshot_{config['run_id']}"
+        holding_folder_path = os.path.join(plot_dir, holding_folder_name)
+
+        if not os.path.exists(holding_folder_path):
+            os.makedirs(holding_folder_path, exist_ok=True)
+        save_path = os.path.join(holding_folder_path, snapshot_name)
         
-        print(f"   💾 Saving: {snapshot_name}")
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"   💾 ATTEMPTING WRITE: {snapshot_name}")
         
-        # 3. Clear the plot from memory so they don't stack on top of each other
-        plt.clf() 
-        plt.close('all')
-    print(f"\n🎉 PIPELINE COMPLETE! Check {plot_dir} for results.")
+        # 3. Force the Save
+        fig.savefig(save_path, dpi=150, bbox_inches='tight', transparent=False)
+        
+        # 4. Clean up memory
+        plt.close(fig)
+        gc.collect()
+    # --- 4. SAVE NUMERICAL DATA (THE STEALTH WARMING REGISTRY) ---
+    # Create a matching 'results' folder within the standardized directory structure
+    data_out_dir = os.path.join(base_path, "AEResults", "aelogs", config['run_id'])
+    os.makedirs(data_out_dir, exist_ok=True)
+
+    # Save the Rolling Audit (Accuracy, Reliability, and Anisotropy Scales)
+    audit_filename = f"audit_{config['run_id']}.csv"
+    audit_path = os.path.join(data_out_dir, audit_filename)
+    results_df.to_csv(audit_path, index=False)
+    
+    # Save the Cross-Validation Details (Raw error points for subtle bias detection)
+    cv_filename = f"cv_details_{config['run_id']}.pkl"
+    cv_path = os.path.join(data_out_dir, cv_filename)
+    pd.to_pickle(cv_details, cv_path)
+
+    print(f"\n📊 DATA REGISTRY UPDATED")
+    print(f"   Audit CSV: {audit_path}")
+    print(f"   CV Pickle: {cv_path}")
+    print(f"🚀 PIPELINE COMPLETE for {config['run_id']}")
+    print(f"\n🚀 DONE. Open your terminal and run: 'ls -lh {plot_dir}'")
 
 if __name__ == "__main__":
     # --- MATCHING THE 0.5 DEGREE 100M RUN ---

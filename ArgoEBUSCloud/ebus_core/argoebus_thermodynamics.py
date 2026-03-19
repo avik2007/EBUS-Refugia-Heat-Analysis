@@ -181,12 +181,17 @@ def estimate_ohc_from_raw_bins(df,
     
     # Create mean energy density for every (Time, Lat, Lon, Depth) box
     # This replaces the slow apply loop with a vectorized GroupBy
-    grid_4d = work_df.groupby(['time_bin', 'lat_bin', 'lon_bin', 'z_idx'], observed=True)['energy_density'].mean()
-    
+    # We use 'first' for the platform_number to keep a record of which float was in this bin
+    grid_4d = work_df.groupby(['time_bin', 'lat_bin', 'lon_bin', 'z_idx'], observed=True).agg({
+        'energy_density': 'mean',
+        'platform_number': 'first'
+    })
+
     # --- STEP 5: INTEGRATE (PIVOT STRATEGY) ---
     # Unstack the Depth index to columns
     # Result: Rows = (Time, Lat, Lon), Columns = Depth Levels
-    grid_wide = grid_4d.unstack(level='z_idx')
+    # Update grid_wide to use the energy_density column specifically
+    grid_wide = grid_4d['energy_density'].unstack(level='z_idx')
     
     # --- [NEW] SMART ROBUSTNESS CHECK ---
     # Instead of just counting filled bins, we check if the profile "spans" the water column.
@@ -237,11 +242,18 @@ def estimate_ohc_from_raw_bins(df,
     total_depth_range = depth_max - depth_min
     results['ohc_per_m'] = results['ohc'] / total_depth_range
     
-    # Add n_raw_points count for metadata
-    raw_counts = work_df.groupby(['time_bin', 'lat_bin', 'lon_bin'], observed=True).size()
-    raw_counts.name = 'n_raw_points'
+    # --- UPDATED METADATA MERGE ---
+    # Aggregate both the total point count AND the float identifier
+    meta_agg = work_df.groupby(['time_bin', 'lat_bin', 'lon_bin'], observed=True).agg({
+        'energy_density': 'size',      # This is our n_raw_points
+        'platform_number': 'first'     # This is our Float ID
+    }).rename(columns={'energy_density': 'n_raw_points'})
     
-    results = results.merge(raw_counts, on=['time_bin', 'lat_bin', 'lon_bin'], how='left')
+    # Merge the metadata (Points + Float ID) into the OHC results
+    results = results.merge(meta_agg, on=['time_bin', 'lat_bin', 'lon_bin'], how='left')
+    # --- CRITICAL TYPE FIX ---
+    # Ensure IDs are strings so PyArrow doesn't crash during S3 upload
+    results['platform_number'] = results['platform_number'].astype(str)
     
     print(f"✅ DONE. Generated {len(results)} OHC estimates.")
     return results

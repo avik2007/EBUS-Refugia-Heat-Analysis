@@ -1326,6 +1326,7 @@ def plot_kriging_snapshot(df_raw,
     ax2.set_title(f"Uncertainty Map")
     
     #plt.show()
+    return fig
 
 
 """

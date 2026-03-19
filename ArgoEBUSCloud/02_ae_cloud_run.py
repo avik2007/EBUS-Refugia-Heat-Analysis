@@ -99,7 +99,8 @@ def run_cloud_pipeline(region="california", lat_step=0.5, lon_step=0.5, time_ste
         'lon_bin': pd.Series(dtype='float64'),
         'ohc': pd.Series(dtype='float64'),
         'ohc_per_m': pd.Series(dtype='float64'),
-        'n_raw_points': pd.Series(dtype='int64')
+        'n_raw_points': pd.Series(dtype='int64'),
+        'platform_number': pd.Series(dtype='str')
     })
 
     # Apply physics function across cluster
