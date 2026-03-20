@@ -32,9 +32,10 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
         depth_range=depth_range
     )
     
-    # Ensure AEResults/aeplots exists
+    # Ensure AEResults/aeplots exists.
+    # AEResults lives one level above ArgoEBUSCloud/, at ArgoEBUSAnalysis/AEResults/.
     ensure_ae_dirs()
-    plot_dir = os.path.join("AEResults", "aeplots")
+    plot_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "AEResults", "aeplots")
     
     print(f"📥 Loading Response Layer Dataset: {config['run_id']}...")
     s3_uri = f"s3://{config['s3_bucket']}/{config['run_id']}.parquet"
@@ -66,7 +67,7 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
     # 1. Force Absolute Pathing
     # This ensures it goes to the EXACT folder regardless of where you run the script
     base_path = os.path.dirname(os.path.abspath(__file__))
-    plot_dir = os.path.join(base_path, "AEResults", "aeplots")
+    plot_dir = os.path.join(base_path, "..", "AEResults", "aeplots")
     
     if not os.path.exists(plot_dir):
         os.makedirs(plot_dir, exist_ok=True)
@@ -109,7 +110,7 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
         gc.collect()
     # --- 4. SAVE NUMERICAL DATA (THE STEALTH WARMING REGISTRY) ---
     # Create a matching 'results' folder within the standardized directory structure
-    data_out_dir = os.path.join(base_path, "AEResults", "aelogs", config['run_id'])
+    data_out_dir = os.path.join(base_path, "..", "AEResults", "aelogs", config['run_id'])
     os.makedirs(data_out_dir, exist_ok=True)
 
     # Save the Rolling Audit (Accuracy, Reliability, and Anisotropy Scales)
@@ -121,6 +122,10 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
     cv_filename = f"cv_details_{config['run_id']}.pkl"
     cv_path = os.path.join(data_out_dir, cv_filename)
     pd.to_pickle(cv_details, cv_path)
+
+    # Save 4 individual physics history PNGs co-located with the audit CSV.
+    plot_physics_history(results_df, cv_details=None, time_unit='days',
+                         save_dir=data_out_dir, run_id=run_id)
 
     print(f"\n📊 DATA REGISTRY UPDATED")
     print(f"   Audit CSV: {audit_path}")

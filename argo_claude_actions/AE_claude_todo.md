@@ -1,22 +1,20 @@
 # Claude TODO — ArgoEBUSAnalysis
 
-Last updated: 2026-03-19
+Last updated: 2026-03-20
 
 ---
 
-## Priority 1: Immediate (Next Session)
+## Priority 1: RMSRE Optimization (If Needed)
 
-- [ ] **Run `plot_physics_history()`** on 2015 Skin Layer (0–100m) audit data
-  - Load `AEResults/aelogs/california_20150101_20151231_res0_5x0_5_t30_0_d0_100/audit_*.csv`
-  - Call `plot_physics_history(results_df, cv_details)` from `argoebus_gp_physics.py`
-  - Save output PNG to `AEResults/aelogs/<run_id>/physics_history.png`
-  - This will show Anisotropy Ratio, Noise, Z-score evolution across 2015
+- [ ] **Evaluate Matérn 3/2 kernel** as alternative to Squared Exponential (RBF)
+  - Matérn handles mesoscale eddies better in heterogeneous summer ocean
+  - Compare RMSRE between RBF and Matérn 3/2 in the rolling analysis
+  - Only switch if it moves RMSRE from ~8% toward target of <5%
+  - User preference: avoid nonstationary noise kernel
 
-- [ ] **Add `plot_float_coverage()` function** to `argoebus_gp_physics.py`
-  - Plots actual float trajectories (spaghetti plot), not binned OHC data points
-  - Gemini proposed: color each float differently, show it in Script 03
-  - Call from Script 03 for a January and August snapshot to compare coverage
-  - Save to `AEResults/aeplots/<run_id>/float_coverage_day<N>.png`
+- [ ] **Test tighter temporal window** (20 days vs. 30 days)
+  - Motivation: reduce RMSRE by ensuring GP fits same physics, not bridging seasonal transitions
+  - Expected tradeoff: fewer data points per window → lower data density
 
 ---
 
@@ -48,20 +46,6 @@ Last updated: 2026-03-19
 
 ---
 
-## Priority 4: RMSRE Optimization (If Needed)
-
-- [ ] **Evaluate Matérn 3/2 kernel** as alternative to Squared Exponential (RBF)
-  - Matérn handles mesoscale eddies better in heterogeneous summer ocean
-  - Compare RMSRE between RBF and Matérn 3/2 in the rolling analysis
-  - Only switch if it moves RMSRE from ~8% toward target of <5%
-  - User preference: avoid nonstationary noise kernel
-
-- [ ] **Test tighter temporal window** (20 days vs. 30 days)
-  - Motivation: reduce RMSRE by ensuring GP fits same physics, not bridging seasonal transitions
-  - Expected tradeoff: fewer data points per window → lower data density
-
----
-
 ## Completed Tasks
 
 - [x] Cloud pipeline working (Scripts 01–03)
@@ -72,3 +56,6 @@ Last updated: 2026-03-19
 - [x] Visual inspection of summer vs. winter snapshots confirmed "eddy collapse"
 - [x] CLAUDE.md created
 - [x] Claude reports folder initialized
+- [x] `plot_physics_history()` run on 2015 Skin Layer — `03b_ae_plot_physics.py` exists
+- [x] `get_float_history()` added to `ae_utils.py` — raw per-dive ERDDAP data access layer
+- [x] `03_ae_plot_float_paths.py` created — float trajectory spaghetti map diagnostic

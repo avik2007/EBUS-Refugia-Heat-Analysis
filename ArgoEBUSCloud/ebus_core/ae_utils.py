@@ -100,12 +100,116 @@ def get_project_paths():
     }
 
 def ensure_ae_dirs():
-    """Guarantees project directory tree exists."""
+    """
+    Guarantees project directory tree exists.
+    AEResults lives at ArgoEBUSAnalysis/AEResults/, one level above ArgoEBUSCloud/.
+    Derives the absolute path from this file's location so it works regardless of cwd.
+    """
     import os
-    base_dir = "AEResults"
+    # This file is at ArgoEBUSAnalysis/ArgoEBUSCloud/ebus_core/ae_utils.py.
+    # Two levels up (..) lands at ArgoEBUSAnalysis/.
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    base_dir = os.path.join(project_root, "AEResults")
     for sub in ["aeplots", "aedata", "aelogs"]:
         path = os.path.join(base_dir, sub)
         os.makedirs(path, exist_ok=True)
+
+def get_float_history(region="california", start_date=None, end_date=None):
+    # Retrieve per-dive Argo float positions for a region and date range.
+    #
+    # The binned OHC parquet (Script 02) only retains one platform_number per bin —
+    # individual dive positions are lost after aggregation. This function queries
+    # ERDDAP directly to recover those raw positions, collapsing per-pressure-level
+    # rows to one row per dive using ERDDAP's &distinct() modifier.
+    #
+    # Inputs:
+    #   region     - Key into get_ebus_registry(). Determines lat/lon spatial window
+    #                and default date range.
+    #   start_date - ISO string "YYYY-MM-DD". Falls back to registry time[0] if None.
+    #   end_date   - ISO string "YYYY-MM-DD". Falls back to registry time[1] if None.
+    #
+    # Output: DataFrame with columns:
+    #   platform_number (str)  - Argo float WMO ID
+    #   lat (float)            - Dive latitude, degrees N
+    #   lon (float)            - Dive longitude, degrees E
+    #   time (datetime, UTC)   - Dive timestamp
+    #   time_days (float)      - Days since 1999-01-01 (matches OHC parquet baseline)
+    #
+    # Expect ~14,000 rows for California 2015 (2–10 sec ERDDAP latency).
+    import pandas as pd
+
+    registry = get_ebus_registry()
+    if region not in registry:
+        raise ValueError(f"Region '{region}' not found in registry. Known regions: {list(registry.keys())}")
+
+    reg = registry[region]
+
+    # Resolve dates from arguments or registry defaults
+    t_start = start_date if start_date else reg["time"][0]
+    t_end   = end_date   if end_date   else reg["time"][1]
+
+    lat_min, lat_max = reg["lat"]
+    lon_min, lon_max = reg["lon"]
+
+    # Build ERDDAP URL.
+    # We request only the four columns we need (platform_number, time, latitude, longitude).
+    # &distinct() tells ERDDAP to collapse the many per-pressure-level rows down to a
+    # single row per unique (float, time) dive — this is the key reduction that makes
+    # the download tractable (~14k rows vs ~500k raw).
+    #
+    # The domain moved from www.ifremer.fr/erddap to erddap.ifremer.fr/erddap.
+    # We use requests instead of pd.read_csv(url) directly because Tomcat 11 on the
+    # new host is strict about RFC 3986 — the < and > in comparison filters must be
+    # percent-encoded (%3C, %3E).  requests.get() with a params dict handles this;
+    # urllib (used internally by pandas) does not encode them.
+    import io
+    import requests
+
+    base_url = "https://erddap.ifremer.fr/erddap/tabledap/ArgoFloats.csv"
+
+    # Build query string manually so we control encoding.
+    # requests.get() percent-encodes the entire params value, but ERDDAP constraint
+    # syntax uses operators inside the value (e.g. latitude>=25.0), so we construct
+    # the full query string ourselves and pass it pre-built.
+    raw_query = (
+        f"platform_number,time,latitude,longitude"
+        f"&latitude>={lat_min}&latitude<={lat_max}"
+        f"&longitude>={lon_min}&longitude<={lon_max}"
+        f"&time>={t_start}T00:00:00Z"
+        f"&time<={t_end}T23:59:59Z"
+        f"&distinct()"
+    )
+
+    # Percent-encode only the characters Tomcat 11 rejects: < and >
+    # We keep & = ( ) as-is since ERDDAP needs them unencoded for query parsing.
+    encoded_query = raw_query.replace("<", "%3C").replace(">", "%3E")
+    erddap_url = f"{base_url}?{encoded_query}"
+
+    try:
+        resp = requests.get(erddap_url, timeout=60)
+        resp.raise_for_status()
+        # skiprows=[1] drops the ERDDAP units row (second CSV line) — same pattern as Script 02
+        df = pd.read_csv(io.StringIO(resp.text), skiprows=[1])
+    except Exception as e:
+        raise RuntimeError(
+            f"ERDDAP query failed for region '{region}' ({t_start} to {t_end}).\n"
+            f"URL attempted: {erddap_url}\n"
+            f"Original error: {e}"
+        )
+
+    # Parse the time column to UTC-aware datetimes so downstream code can use .dt accessors
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+
+    # Compute time_days to match the baseline used in the OHC parquet (Script 02)
+    baseline = pd.Timestamp("1999-01-01", tz="UTC")
+    df["time_days"] = (df["time"] - baseline).dt.total_seconds() / 86400.0
+
+    # Rename to match the rest of the codebase schema
+    df = df.rename(columns={"latitude": "lat", "longitude": "lon"})
+
+    # Enforce column order for readability
+    return df[["platform_number", "lat", "lon", "time", "time_days"]]
+
 
 def calculate_bin(value, step):
     """Generic binning helper."""

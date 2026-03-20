@@ -28,7 +28,7 @@ data/*
 !data/.gitkeep
 ArgoData/*
 AEResults
-
+#claude_reports/
 
 # --- IDE Settings (Optional) ---
 .vscode/
@@ -40,3 +40,6 @@ AEResults
 
 # ----- Keep Data out of repo -----
 ArgoData/
+Gemini-Testing Ocean Refugia Hypothesis March 19, 2026.txt
+Gemini-Testing Ocean Refugia Hypothesis.txt:Zone.Identifier
+proposal_for_claudemd.txt

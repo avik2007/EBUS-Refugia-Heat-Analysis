@@ -68,7 +68,8 @@ ArgoEBUSAnalysis/
 │
 ├── AEResults/
 │   ├── aeplots/                           # Output PNGs — e.g., ebus_2015_trend.png
-│   └── aeresults/                         # Output parquet/CSV results files.
+│   ├── aeresults/                         # Output parquet/CSV results files.
+│   └── aelogs/                            # Per-run audit CSVs, CV pickles, and physics history PNGs.
 │
 ├── CCS_OHC_Deep_GSW.csv                   # Processed OHC result: deep layer (500-1000m)
 │                                          #   for California Current System.

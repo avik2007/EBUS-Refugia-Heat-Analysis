@@ -6,6 +6,7 @@
 # 3. analyze_rolling_correlations()
 # 4. produce_kriging_map
 
+import os
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -1353,97 +1354,98 @@ def plot_kriging_snapshot(df_raw,
 
     TAKES THE OUTPUT FROM ARGOPPR.analyze_rolling_correlations()
 """
-def plot_physics_history(results_df, cv_details=None, time_unit='days'):
+def plot_physics_history(results_df, cv_details=None, time_unit='days',
+                         save_dir=None, run_id=None):
     """
     Visualizes the evolution of Ocean Physics, Model Reliability, and Error Statistics.
-    
+    Saves each subplot as a separate PNG if save_dir and run_id are provided.
+
     Parameters:
     -----------
     results_df : pd.DataFrame
-        Output 1 from analyze_rolling_correlations (The metadata).
+        Output 1 from analyze_rolling_correlations (the per-window metadata).
     cv_details : dict, optional
-        Output 2 from analyze_rolling_correlations (The raw validation data).
-        Required to plot the Z-score distribution.
+        Output 2 from analyze_rolling_correlations (raw validation data). Currently unused.
+    time_unit : str
+        Label for the x-axis time dimension (e.g. 'days').
+    save_dir : str, optional
+        Directory in which to save output PNGs. If None, files are not saved.
+    run_id : str, optional
+        Unique identifier for the run, used in output filenames. If None, files are not saved.
     """
-    
-    # Determine layout based on whether we have cv_details
-    rows = 4 if cv_details is not None else 3
-    height = 16 if cv_details is not None else 12
-    
-    fig, axes = plt.subplots(rows, 1, figsize=(12, height))
-    
+
     t = results_df['window_center']
-    
+
+    # Helper: optionally save a figure to disk as {prefix}_{run_id}.png, then close it.
+    # Only writes if both save_dir and run_id are provided so callers can
+    # freely omit those args during interactive exploration.
+    def _save_fig(fig, prefix):
+        if save_dir is not None and run_id is not None:
+            path = os.path.join(save_dir, f"{prefix}_{run_id}.png")
+            fig.savefig(path, dpi=150, bbox_inches='tight')
+            print(f"  Saved: {path}")
+
     # --- PLOT 1: SPATIAL SCALES (The Physics) ---
+    # Shows how lat and lon correlation lengths evolve over time.
+    # Lon >> Lat indicates zonal/atmospheric forcing; convergence signals regime change.
+    fig1, ax1 = plt.subplots(figsize=(12, 4))
     scale_cols = [c for c in results_df.columns if 'scale_' in c]
     for col in scale_cols:
         label = col.replace('scale_', '').title()
-        axes[0].plot(t, results_df[col], marker='o', linestyle='-', linewidth=2, label=f"{label} Scale")
-        
-    axes[0].set_ylabel("Correlation Length (Degrees)")
-    axes[0].set_title("Evolution of Spatial Correlation Scales")
-    axes[0].grid(True, linestyle='--', alpha=0.6)
-    axes[0].legend()
-    
-    # --- PLOT 2: MODEL UNCERTAINTY (The Network) ---
-    axes[1].plot(t, results_df['noise_val'], color='purple', marker='s', linestyle='-')
-    axes[1].set_ylabel("Noise Level (Scaled Variance)")
-    axes[1].set_title("Evolution of Model Noise (Observation Uncertainty + Chaos)")
-    axes[1].grid(True, linestyle='--', alpha=0.6)
-    
-    # --- PLOT 3: RELIABILITY OVER TIME (The Stability Check) ---
-    axes[2].plot(t, results_df['std_z'], color='green', marker='d', label='Z-Score Std Dev')
-    
-    # Add "Goldilocks Zone"
-    axes[2].axhspan(0.9, 1.1, color='green', alpha=0.1, label='Target Zone (0.9-1.1)')
-    axes[2].axhline(1.0, color='green', linestyle='--', alpha=0.5)
-    
-    axes[2].set_ylabel("Z-Score Std Dev")
-    axes[2].set_title("Reliability Check (Is the model confident?)")
-    axes[2].grid(True, linestyle='--', alpha=0.6)
-    axes[2].legend()
-    
-    # --- PLOT 4: ERROR DISTRIBUTION (The Gaussian Check) ---
-    if cv_details is not None:
-        ax4 = axes[3]
-        
-        # 1. Aggregate ALL Z-scores from history
-        all_z_scores = []
-        for window_date, df_cv in cv_details.items():
-            if 'z_score' in df_cv.columns:
-                all_z_scores.extend(df_cv['z_score'].dropna().values)
-        
-        all_z_scores = np.array(all_z_scores)
-        
-        # 2. Plot Histogram
-        # Using density=True to compare with PDF
-        bins = np.linspace(-4, 4, 40)
-        ax4.hist(all_z_scores, bins=bins, density=True, alpha=0.6, color='gray', label='Observed Errors')
-        
-        # 3. Plot Ideal Normal Distribution
-        x_range = np.linspace(-4, 4, 100)
-        ax4.plot(x_range, stats.norm.pdf(x_range, 0, 1), 'k--', linewidth=2, label='Ideal Gaussian')
-        
-        # 4. Styling
-        
-
-        ax4.set_title("🔔 STATISTICAL CHECK: Are errors Gaussian?", fontweight='bold')
-        ax4.set_xlabel("Z-Score (Standardized Error)")
-        ax4.set_ylabel("Probability Density")
-        ax4.set_xlim(-4, 4)
-        ax4.grid(True, linestyle='--', alpha=0.3)
-        ax4.legend()
-        
-        # Add stats text box
-        mean_z = np.mean(all_z_scores)
-        std_z = np.std(all_z_scores)
-        stats_text = f"Mean: {mean_z:.2f}\nStd Dev: {std_z:.2f}\nN Points: {len(all_z_scores)}"
-        ax4.text(0.95, 0.95, stats_text, transform=ax4.transAxes, 
-                 verticalalignment='top', horizontalalignment='right',
-                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-
-    # Shared X-axis formatting
-    axes[-1].set_xlabel(f"Time ({time_unit})")
-    
+        ax1.plot(t, results_df[col], marker='o', linestyle='-', linewidth=2, label=f"{label} Scale")
+    ax1.set_ylabel("Correlation Length (Degrees)")
+    ax1.set_xlabel(f"Time ({time_unit})")
+    ax1.set_title("Evolution of Spatial Correlation Scales")
+    ax1.grid(True, linestyle='--', alpha=0.6)
+    ax1.legend()
     plt.tight_layout()
+    _save_fig(fig1, "lat_lon_evolution")
+
+    # --- PLOT 2: MODEL NOISE (The Uncertainty) ---
+    # Noise level tracks observation uncertainty + ocean chaos.
+    # High noise in summer = eddy-rich, heterogeneous flow.
+    fig2, ax2 = plt.subplots(figsize=(12, 4))
+    ax2.plot(t, results_df['noise_val'], color='purple', marker='s', linestyle='-')
+    ax2.set_ylabel("Noise Level (Scaled Variance)")
+    ax2.set_xlabel(f"Time ({time_unit})")
+    ax2.set_title("Evolution of Model Noise (Observation Uncertainty + Chaos)")
+    ax2.grid(True, linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    _save_fig(fig2, "noise_evolution")
+
+    # --- PLOT 3: RELIABILITY (Z-Score Std Dev) ---
+    # Std Z ~ 1.0 means the GP uncertainty estimate is well-calibrated.
+    # The Goldilocks zone (0.9-1.1) is the target band for good calibration.
+    fig3, ax3 = plt.subplots(figsize=(12, 4))
+    ax3.plot(t, results_df['std_z'], color='green', marker='d', label='Z-Score Std Dev')
+    ax3.axhspan(0.9, 1.1, color='green', alpha=0.1, label='Target Zone (0.9-1.1)')
+    ax3.axhline(1.0, color='green', linestyle='--', alpha=0.5)
+    ax3.set_ylabel("Z-Score Std Dev")
+    ax3.set_xlabel(f"Time ({time_unit})")
+    ax3.set_title("Reliability Check (Is the model confident?)")
+    ax3.grid(True, linestyle='--', alpha=0.6)
+    ax3.legend()
+    plt.tight_layout()
+    _save_fig(fig3, "zscore_std")
+
+    # --- PLOT 4: ANISOTROPY RATIO (The Stealth Signal) ---
+    # Anisotropy = Lat_Scale / Lon_Scale.
+    # < 1.0: zonal/atmospheric forcing dominates (eddy-shredded, Skin Layer expected behavior)
+    # > 1.0: meridional current flow dominates (Ekman transport pathway active)
+    # The stealth warming hypothesis predicts this ratio increases with depth.
+    anisotropy = results_df['scale_lat_bin'] / results_df['scale_lon_bin']
+    fig4, ax4 = plt.subplots(figsize=(12, 4))
+    ax4.plot(t, anisotropy, color='darkorange', marker='^', linestyle='-',
+             linewidth=2, label='Anisotropy Ratio (Lat/Lon)')
+    ax4.axhline(1.0, color='gray', linestyle='--', alpha=0.7, label='Isotropic (1.0)')
+    ax4.axhspan(1.0, max(anisotropy.max() + 0.1, 1.1), color='darkorange', alpha=0.07,
+                label='Meridional dominance zone')
+    ax4.set_ylabel("Anisotropy Ratio")
+    ax4.set_xlabel(f"Time ({time_unit})")
+    ax4.set_title("Anisotropy Ratio: Meridional vs. Zonal Dominance (Stealth Signal)")
+    ax4.grid(True, linestyle='--', alpha=0.6)
+    ax4.legend()
+    plt.tight_layout()
+    _save_fig(fig4, "anisotropy")
+
     plt.show()

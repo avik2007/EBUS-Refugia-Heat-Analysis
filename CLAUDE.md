@@ -28,9 +28,10 @@ If the Source Layer warms faster than the Background, that is the "stealth" sign
 - One task per subagent.
 
 ### 3. Self-Improvement Loop
-- After ANY correction: update `claude_reports/claude_lessons.md`.
+- After ANY correction: update `argo_claude_actions/AE_claude_lessons.md`.
 - Write rules that prevent the same mistake from recurring.
 - Review lessons at the start of each session.
+- **Also add the rule directly to CLAUDE.md** (in the relevant section, or as a new section at the bottom under `## Hard-Won Rules`). CLAUDE.md is loaded every session; `AE_claude_lessons.md` is reference. Both must be updated together.
 
 ### 4. Verification Before Done
 - Never mark a task complete without proving it works.
@@ -39,6 +40,11 @@ If the Source Layer warms faster than the Background, that is the "stealth" sign
 ### 5. Demand Elegance
 - For non-trivial changes: ask "is there a more elegant way?"
 - Skip for simple, obvious fixes.
+
+### 7. Python Environment
+- **Always activate `ebus-cloud-env` before running any project code.**
+- Use `conda run -n ebus-cloud-env python <script>` for non-interactive execution.
+- The base conda environment does NOT have the required packages (pandas, sklearn, etc.).
 
 ### 6. Autonomous Bug Fixing
 - When given a bug: fix it without hand-holding.
@@ -86,13 +92,13 @@ ArgoEBUSAnalysis/
 │   ├── 01_ae_cloud_ingestion.py        # ERDDAP data pull (legacy)
 │   ├── 02_ae_cloud_run.py              # Cloud pipeline: ingest + OHC calc -> S3 parquet
 │   ├── 03_ae_inspect_data.py           # Analysis: rolling GP + save kriging storyboard
-│   └── AEResults/
-│       ├── aeplots/                    # Kriging snapshot PNGs organized by run_id
-│       └── aelogs/                     # audit_*.csv and cv_details_*.pkl
-├── claude_reports/
-│   ├── claude_todo.md                  # Future tasks and plans
-│   ├── claude_recentactions.md         # Recent actions for user review
-│   └── claude_lessons.md              # Lessons learned after mistakes
+├── AEResults/
+│   ├── aeplots/                        # Kriging snapshot PNGs organized by run_id
+│   └── aelogs/                         # audit_*.csv and cv_details_*.pkl
+├── argo_claude_actions/
+│   ├── AE_claude_todo.md               # Future tasks and plans
+│   ├── AE_claude_recentactions.md      # Recent actions for user review
+│   └── AE_claude_lessons.md            # Lessons learned after mistakes
 ├── References/                         # Scientific papers (RIS format)
 ├── Notebooks (1-5.ipynb)               # Exploratory notebooks (legacy)
 └── CLAUDE.md                           # This file
@@ -138,3 +144,16 @@ ArgoEBUSAnalysis/
 - When referencing code, use `file:line_number` format.
 - Prefer editing existing files over creating new ones.
 - Do NOT add docstrings, comments, or type annotations to code that wasn't changed.
+- **Always write verbose comments for any code you write or modify.** Every function must have a header comment explaining what it does, why it exists, what inputs mean physically, and what the output represents. Inline comments should explain non-obvious logic step by step. Code can be brief; comments should be thorough. The goal is that a human reading the code cold can follow every decision.
+
+---
+
+## Hard-Won Rules
+
+Rules derived from past mistakes. Update this section every time `AE_claude_lessons.md` is updated.
+
+### Always activate ebus-cloud-env before running any code
+The base conda environment lacks all required packages. Any `python` call must use `conda run -n ebus-cloud-env python <script>` or confirm the environment is active first.
+
+### AEResults/ lives at ArgoEBUSAnalysis/, not inside ArgoEBUSCloud/
+`AEResults/` is a sibling of `ArgoEBUSCloud/`. All path construction from inside `ArgoEBUSCloud/` scripts must traverse up one level: `os.path.join(base_dir, "..", "AEResults", ...)`.
