@@ -2,6 +2,45 @@
 
 ---
 
+## 2026-03-20 — Session 5 (registry corrections + get_vertical_layers)
+
+**What was done:**
+
+1. **Updated `get_ebus_registry()` in `ae_utils.py`** — aligned non-California EBUS bounds with Frontiers 2024 paper spatial domain:
+   - `california` — NO CHANGE; preserved as-is (140W dataset, all existing 2015 S3 artifacts reference it)
+   - `californiav2` — NEW entry: lat [30, 45], lon [-130, -115]; tighter coastal window matching the paper's CCS domain
+   - `humboldt` — lat [-35, -5] (was [-45, 0]), lon [-85, -70] (was [-90, -70])
+   - `canary` — lat [15, 35] (was [10, 45]), lon [-25, -10] (was [-30, -5])
+   - `benguela` — lat [-35, -15] (was [-35, -10]), lon [5, 20] unchanged
+
+2. **Added `get_vertical_layers()` to `ae_utils.py`** — formalizes the canonical Vertical Sandwich depth layer definitions:
+   - `Response`: [0, 100] — fast atmospheric response
+   - `Source`: [150, 400] — Ekman upwelling source water / stealth heat layer
+   - `Background`: [500, 1000] — deep ocean baseline for warming rate comparison
+
+**Verification result:** Import confirmed in `ebus-cloud-env`; all six registry entries and all three layer definitions match plan exactly. `california` bounds unchanged.
+
+---
+
+## 2026-03-20 — Session 4 (plot_float_paths modularity refactor)
+
+**What was done:**
+
+1. **Refactored `03_ae_plot_float_paths.py`** — converted from a standalone script with module-level constants into a proper importable function
+   - Replaced `REGION`, `START_DATE`, etc. module-level constants + `main()` with `plot_float_paths(region, lat_step, lon_step, time_step, depth_range)`
+   - Signature now matches `run_diagnostic_inspection()` exactly — both can be called serially in any parent analysis script without duplicating parameter handling
+   - Dates are resolved internally via `get_ae_config()` (same as `run_diagnostic_inspection()`), not hardcoded
+   - Returns output path as a string so callers can log it
+   - `if __name__ == "__main__"` block preserved for standalone use
+
+2. **Established workflow rule**: completed tasks leave `AE_claude_todo.md` entirely and are recorded here in `AE_claude_recentactions.md`. The todo file contains only forward-looking work.
+
+3. **Updated `AE_claude_lessons.md` and `CLAUDE.md`** — added modularity rule
+
+**Verification result:** `python 03_ae_plot_float_paths.py` → 4,348 rows, 99 floats, PNG saved to correct path.
+
+---
+
 ## 2026-03-20 — Session 3 (physics history plots + AEResults path fix + repo hygiene)
 
 **What was done:**

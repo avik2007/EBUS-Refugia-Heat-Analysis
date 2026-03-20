@@ -1,15 +1,18 @@
 """
-Diagnostic: float trajectory spaghetti map.
+Float trajectory spaghetti map — modular diagnostic tool.
 
 Fetches raw Argo dive positions via get_float_history() and plots each float as
-a distinct colored line over a Cartopy basemap. Intended as a standalone sanity
-check that the data-access layer works and as a visual coverage diagnostic.
+a distinct colored line over a Cartopy basemap.  Intended as a coverage diagnostic
+that can be called serially alongside run_diagnostic_inspection() in any analysis
+script — both functions share the same parameter signature so they compose cleanly.
 
-Usage (defaults match the canonical 2015 California run):
+Usage as a module (e.g., from a multi-region analysis script):
+    from 03_ae_plot_float_paths import plot_float_paths
+    plot_float_paths(region="california", depth_range=(0, 100))
+    plot_float_paths(region="humboldt",   depth_range=(0, 100))
+
+Usage as a standalone script:
     python 03_ae_plot_float_paths.py
-
-All parameters mirror get_ae_config() so the save path is always consistent with
-the run being analyzed.
 """
 
 import os
@@ -28,25 +31,55 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ebus_core.ae_utils import get_float_history, get_ae_config
 
-# ---------------------------------------------------------------------------
-# Parameters — edit here to target a different run
-# ---------------------------------------------------------------------------
-REGION      = "california"
-START_DATE  = "2015-01-01"
-END_DATE    = "2015-12-31"
-DEPTH_RANGE = (0, 100)
-LAT_STEP    = 0.5
-LON_STEP    = 0.5
-TIME_STEP   = 30.0
-# ---------------------------------------------------------------------------
 
+def plot_float_paths(region="california", lat_step=0.5, lon_step=0.5,
+                     time_step=30.0, depth_range=(0, 100)):
+    # ---------------------------------------------------------------------------
+    # Produce a float-trajectory spaghetti map for a given analysis run.
+    #
+    # Signature mirrors run_diagnostic_inspection() exactly so the two functions
+    # can be called back-to-back in any parent analysis script without duplicating
+    # parameter handling:
+    #
+    #   run_diagnostic_inspection(region="california", depth_range=(0, 100))
+    #   plot_float_paths(         region="california", depth_range=(0, 100))
+    #
+    # Inputs (all match get_ae_config / run_diagnostic_inspection):
+    #   region      - Key into get_ebus_registry() ("california", "humboldt", etc.)
+    #   lat_step    - Spatial bin size in degrees latitude (default 0.5)
+    #   lon_step    - Spatial bin size in degrees longitude (default 0.5)
+    #   time_step   - Rolling-window step in days (default 30.0)
+    #   depth_range - Tuple (min_m, max_m) defining the depth layer to label
+    #                 (used only for consistent output filename; no depth filtering
+    #                 is applied to the float-trajectory data itself, since
+    #                 get_float_history uses &distinct() and drops depth entirely)
+    #
+    # Output:
+    #   PNG saved to AEResults/aeplots/float_path_traj_{run_id}.png
+    #   Returns the output path as a string so callers can log it.
+    # ---------------------------------------------------------------------------
 
-def main():
-    # --- 1. Fetch dive-level float positions ---
-    # get_float_history() queries ERDDAP with &distinct() to collapse per-pressure
-    # rows to one row per dive.  Expect ~14,000 rows and ~70 floats for 2015 California.
-    print(f"Fetching float histories for '{REGION}' ({START_DATE} → {END_DATE})...")
-    df = get_float_history(REGION, START_DATE, END_DATE)
+    # --- 1. Resolve config (dates, spatial bounds, output paths) ---
+    # get_ae_config() reads the EBUS registry to resolve default start/end dates
+    # for the chosen region and constructs the canonical run_id used for naming.
+    config     = get_ae_config(
+        region      = region,
+        lat_step    = lat_step,
+        lon_step    = lon_step,
+        time_step   = time_step,
+        depth_range = depth_range,
+    )
+    start_date = config["start_date"]
+    end_date   = config["end_date"]
+    run_id     = config["run_id"]
+
+    # --- 2. Fetch dive-level float positions via ERDDAP ---
+    # get_float_history() collapses the many per-pressure-level ERDDAP rows down
+    # to one row per dive using &distinct(). Expect ~14,000 rows / ~70 floats for
+    # California 2015.  The depth_range is NOT passed here — depth is irrelevant
+    # for spatial coverage; we want all floats that visited the region.
+    print(f"Fetching float histories for '{region}' ({start_date} -> {end_date})...")
+    df = get_float_history(region, start_date, end_date)
 
     print(f"  DataFrame shape : {df.shape}")
     n_floats = df["platform_number"].nunique()
@@ -54,36 +87,21 @@ def main():
 
     if df.empty:
         print("ERROR: No data returned. Check region / date range.")
-        sys.exit(1)
+        return None
 
-    # --- 2. Resolve the save path using get_ae_config() ---
-    # Float trajectory plots live directly in aeplots/ (not inside a snapshot subfolder)
+    # --- 3. Resolve save path ---
+    # Float trajectory plots go directly into aeplots/ (not inside a snapshot subfolder)
     # because they represent the full study period, not a single kriging snapshot.
-    config  = get_ae_config(
-        region      = REGION,
-        start_date  = START_DATE,
-        end_date    = END_DATE,
-        depth_range = DEPTH_RANGE,
-        lat_step    = LAT_STEP,
-        lon_step    = LON_STEP,
-        time_step   = TIME_STEP,
-    )
-
-    # Filename mirrors run_id so it's immediately clear what region, dates, resolution,
-    # and depth this plot covers.  Sits directly in aeplots/, not inside a snapshot
-    # subfolder, because it represents the full study period rather than one kriging
-    # snapshot.
-    run_id    = config["run_id"]
     plots_dir = config["paths"]["plots"]
     os.makedirs(plots_dir, exist_ok=True)
     out_path = os.path.join(plots_dir, f"float_path_traj_{run_id}.png")
 
-    # --- 3. Build the spaghetti map ---
-    # Style matches argoebus_gp_physics.py: PlateCarree projection, LAND + COASTLINE
-    # features, dashed gridlines.
-    reg = config  # has lat/lon keys
-    lon_min, lon_max = reg["lon"]
-    lat_min, lat_max = reg["lat"]
+    # --- 4. Build the spaghetti map ---
+    # Projection and feature style intentionally match argoebus_gp_physics.py
+    # (PlateCarree, LAND + COASTLINE, dashed gridlines) so trajectory and kriging
+    # plots look consistent when viewed side by side.
+    lon_min, lon_max = config["lon"]
+    lat_min, lat_max = config["lat"]
 
     fig = plt.figure(figsize=(12, 8))
     ax  = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
@@ -92,15 +110,15 @@ def main():
     ax.add_feature(cfeature.COASTLINE, zorder=101)
     ax.gridlines(draw_labels=True, linestyle="--", alpha=0.5)
 
-    # Assign a distinct color to each float by cycling through a colormap.
-    # We use a tab20 palette (20 distinct colors) — it wraps around for >20 floats,
-    # which is visually acceptable at ~70 floats since the goal is coverage, not identity.
-    floats  = df["platform_number"].unique()
-    cmap    = matplotlib.colormaps.get_cmap("tab20").resampled(len(floats))
-    colors  = {fid: cmap(i) for i, fid in enumerate(floats)}
+    # Assign a distinct color per float by cycling through tab20.
+    # tab20 has 20 colors; it wraps for >20 floats, which is acceptable because
+    # the goal here is spatial coverage, not individual float identity.
+    floats = df["platform_number"].unique()
+    cmap   = matplotlib.colormaps.get_cmap("tab20").resampled(len(floats))
+    colors = {fid: cmap(i) for i, fid in enumerate(floats)}
 
-    # Plot each float's dive sequence as a line (sorted by time so the path is
-    # topologically correct) with a small marker at each actual dive position.
+    # Draw each float as a time-sorted line with small scatter dots at each dive
+    # to distinguish multi-visit positions from straight-line interpolation.
     for fid, grp in df.groupby("platform_number"):
         grp_sorted = grp.sort_values("time")
         ax.plot(
@@ -111,7 +129,6 @@ def main():
             alpha     = 0.7,
             transform = ccrs.PlateCarree(),
         )
-        # Small dot at each dive — distinguishes multi-visit positions from straight lines
         ax.scatter(
             grp_sorted["lon"].values,
             grp_sorted["lat"].values,
@@ -123,19 +140,31 @@ def main():
         )
 
     ax.set_title(
-        f"Argo Float Trajectories — {REGION.capitalize()} "
-        f"({START_DATE} to {END_DATE})\n"
+        f"Argo Float Trajectories — {region.capitalize()} "
+        f"({start_date} to {end_date})\n"
         f"n={n_floats} floats, {len(df):,} dives",
         fontsize=11,
     )
 
     plt.tight_layout()
 
-    # --- 4. Save ---
+    # --- 5. Save and clean up ---
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"Figure saved → {out_path}")
+    print(f"Figure saved -> {out_path}")
+    return out_path
 
 
 if __name__ == "__main__":
-    main()
+    # Default invocation mirrors the canonical 2015 California Skin Layer run.
+    # To run multiple regions in sequence, import plot_float_paths() in a parent script:
+    #
+    #   plot_float_paths(region="california", depth_range=(0, 100))
+    #   plot_float_paths(region="humboldt",   depth_range=(0, 100))
+    plot_float_paths(
+        region      = "california",
+        lat_step    = 0.5,
+        lon_step    = 0.5,
+        time_step   = 30.0,
+        depth_range = (0, 100),
+    )

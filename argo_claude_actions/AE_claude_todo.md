@@ -44,18 +44,3 @@ Last updated: 2026-03-20
   - Already partially done: confirmed ratio ~0.36 Jan, ~0.49 Aug from 2015 logs
   - Formalize this into a plot showing ratio vs. month for a full year
 
----
-
-## Completed Tasks
-
-- [x] Cloud pipeline working (Scripts 01–03)
-- [x] 2015 Skin Layer (0–100m) full year processed
-- [x] Kriging storyboard PNGs saved (23 snapshots)
-- [x] Audit CSV and CV pickle saved to `AEResults/aelogs/`
-- [x] Anisotropy Ratio tracking added to `analyze_rolling_correlations()`
-- [x] Visual inspection of summer vs. winter snapshots confirmed "eddy collapse"
-- [x] CLAUDE.md created
-- [x] Claude reports folder initialized
-- [x] `plot_physics_history()` run on 2015 Skin Layer — `03b_ae_plot_physics.py` exists
-- [x] `get_float_history()` added to `ae_utils.py` — raw per-dive ERDDAP data access layer
-- [x] `03_ae_plot_float_paths.py` created — float trajectory spaghetti map diagnostic

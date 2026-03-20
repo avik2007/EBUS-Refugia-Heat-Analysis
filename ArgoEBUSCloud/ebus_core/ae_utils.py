@@ -11,31 +11,70 @@ def get_ebus_registry():
             "s3_bucket": "argo-ebus-project-data-abm"
         },
         # THE FULL CCS (For actual scientific analysis)
+        # Preserved as-is: this is the 140W dataset used in all 2015 runs.
+        # Do NOT alter these bounds; existing S3 artifacts reference this exact window.
         "california": {
-            "lat": [25.0, 50.0],      
+            "lat": [25.0, 50.0],
             "lon": [-140.0, -110.0],
-            "time": ["2015-01-01", "2015-12-31"], # Restoring the time key
+            "time": ["2015-01-01", "2015-12-31"],
             "s3_bucket": "argo-ebus-project-data-abm"
         },
+        # CCS window aligned with Frontiers 2024 paper spatial domain.
+        # Tighter longitude (130W–115W) cuts offshore Pacific and focuses on
+        # the coastal upwelling zone and California Undercurrent corridor.
+        "californiav2": {
+            "lat": [30.0, 45.0],
+            "lon": [-130.0, -115.0],
+            "time": ["2015-01-01", "2015-12-31"],
+            "s3_bucket": "argo-ebus-project-data-abm"
+        },
+        # Humboldt Current System — bounds corrected to Frontiers 2024 domain.
+        # Previous lat [-45,0] was too broad; [-35,-5] isolates the active CUS.
         "humboldt": {
-            "lat": [-45.0, 0.0],     
-            "lon": [-90.0, -70.0],
+            "lat": [-35.0, -5.0],
+            "lon": [-85.0, -70.0],
             "time": ["2015-01-01", "2015-12-31"],
             "s3_bucket": "argo-ebus-project-data-abm"
         },
+        # Canary Current System — bounds corrected to Frontiers 2024 domain.
+        # Previous lat [10,45] too broad; [15,35] tightens to core upwelling band.
+        # Previous lon [-30,-5] too wide; [-25,-10] removes open-ocean bias.
         "canary": {
-            "lat": [10.0, 45.0],      
-            "lon": [-30.0, -5.0],
+            "lat": [15.0, 35.0],
+            "lon": [-25.0, -10.0],
             "time": ["2015-01-01", "2015-12-31"],
             "s3_bucket": "argo-ebus-project-data-abm"
         },
+        # Benguela Current System — bounds corrected to Frontiers 2024 domain.
+        # Previous lat [-35,-10] slightly off; [-35,-15] removes equatorial noise.
+        # Longitude [5,20] unchanged.
         "benguela": {
-            "lat": [-35.0, -10.0],    
-            "lon": [0.0, 20.0],
+            "lat": [-35.0, -15.0],
+            "lon": [5.0, 20.0],
             "time": ["2015-01-01", "2015-12-31"],
             "s3_bucket": "argo-ebus-project-data-abm"
         }
     }
+
+def get_vertical_layers():
+    # Returns the canonical "Vertical Sandwich" depth layer definitions used
+    # throughout the stealth warming analysis.
+    #
+    # Response  (0–100m):   fast atmospheric response layer — SST proxy; dominated
+    #                       by air-sea heat exchange and mixed-layer dynamics.
+    # Source    (150–400m): Ekman upwelling source water — where stealth heat hides.
+    #                       This is the layer expected to warm fastest if the
+    #                       California Undercurrent is transporting anomalous heat.
+    # Background (500–1000m): deep ocean baseline; slow thermocline variability
+    #                         used as a reference to isolate the Source signal.
+    #
+    # Key diagnostic: Source warming rate > Background warming rate → refugia signal.
+    return {
+        "Response":   [0, 100],
+        "Source":     [150, 400],
+        "Background": [500, 1000],
+    }
+
 
 def get_ae_config(region="california", lat_step=0.5, lon_step=0.5, time_step=30.0, 
                   depth_range=(0, 100), start_date=None, end_date=None):
