@@ -2,6 +2,109 @@
 
 ---
 
+## 2026-03-25 — Session 7 (3D GP with Exponential Kernel — implementation)
+
+**What was done:**
+
+1. **Extended `analyze_rolling_correlations` in `argoebus_gp_physics.py`** with three new parameters:
+   - `mode='2D'` (default, backward-compatible) or `'3D'` (adds time as a third GP dimension)
+   - `kernel_type='rbf'` (default) or `'matern0.5'` (Exponential/OU kernel). Both are fully
+     interchangeable: same output columns, same scaling, same diagnostics — callers can run
+     the function twice with different kernel_type values and compare results_df directly.
+   - `time_ls_bounds_days=(2.0, 30.0)`: physical-day bounds on the time length scale optimizer.
+
+2. **Split-scaler architecture**: in 3D mode, spatial columns (lat/lon) use `StandardScaler`;
+   the time column uses a window-relative normalization (`t̃ = (t − t_center) / (W/2)`) so
+   window center = 0 and edges = ±1. Physical time length scale recovered as `l̃_t × (W/2)`.
+
+3. **Kernel factory (`_build_kernel`)**: a closure that switches between `RBF` and
+   `Matern(nu=0.5)` based on `kernel_type`. Used for both the initial fit and the
+   auto-calibration re-fit, ensuring the kernel choice propagates through the entire loop.
+
+4. **Per-dimension time bounds**: in 3D auto-tune mode, the time length scale optimizer is
+   constrained to [2/half_window, 30/half_window] in normalized units, preventing degenerate
+   solutions (ignore time or treat all obs as synchronous).
+
+5. **Results record updated**: iterates over `all_feature_cols` (spatial + time in 3D mode),
+   automatically writing `scale_time_days` to the audit CSV. Anisotropy calculation switched
+   from hardcoded `scale_lat_bin`/`scale_lon_bin` to a dynamic name lookup.
+
+6. **`plot_physics_history` updated**:
+   - Plot 1: now shows spatial-only scale columns (excludes `scale_time*`).
+   - Plot 4: anisotropy uses dynamic column lookup; skips gracefully if columns absent.
+   - Plot 5 (new): temporal persistence plot, conditional on `scale_time_days` in results_df.
+
+7. **Created `argo_claude_actions/AE_plan_3d_gpr_matern.md`**: human-readable design doc with
+   the math (kernel equations, normalization formulas, bounds derivation) for Gemini review.
+
+8. **Updated** `ae_file_structure.txt`, `AE_claude_todo.md` (corrected human notes, updated
+   Priority 1 task).
+
+**Verification result:** Smoke test passed — 2D-RBF, 3D-Matern, and 3D-RBF all ran without error; `scale_time_days` present in 3D output; `plot_physics_history` produced Plot 5 conditionally.
+
+---
+
+## 2026-03-25 — Session 7b (04_ae_testmatern_and_3dwindow.py + 04b scripts)
+
+**What was done:**
+
+1. **Created `04_ae_testmatern_and_3dwindow.py`** — loads the same S3 parquet as script 03 and
+   runs both GP variants back-to-back for direct comparison:
+   - Run A: `mode='2D', kernel_type='rbf'` (identical to script 03 — direct baseline)
+   - Run B: `mode='3D', kernel_type='matern0.5'` (Exponential kernel + time dimension)
+   - Saves audit CSVs, CV pickles, and physics PNGs to separate named folders.
+   - Generates kriging snapshots for the 2D run only (3D snapshot support not yet implemented).
+   - Prints a side-by-side RMSRE/Z-score/anisotropy summary at the end.
+
+2. **Created `04b_ae_plot_matern_physics.py`** — analogous to `03b_ae_plot_physics.py`.
+   Loads both audit CSVs and regenerates physics PNGs without re-running kriging.
+   Also saves a combined RMSRE comparison PNG overlaying both time series.
+
+3. **Output folder naming convention:**
+   - `AEResults/aelogs/{run_id}_2d_rbf/` — Run A baseline
+   - `AEResults/aelogs/{run_id}_3d_matern05/` — Run B Exponential
+
+4. **Updated `ae_file_structure.txt`** to document the new scripts and output folders.
+
+---
+
+## 2026-03-25 — Session 7c (first real-data test results)
+
+**Results on 2015 California Skin Layer (0–100m), 23 rolling windows, window=30d / step=15d:**
+
+| Metric | 2D RBF | 3D Matern(ν=0.5) |
+|---|---|---|
+| Median RMSRE | 4.87% | **3.82%** |
+| Max RMSRE | 8.34% | **6.50%** |
+| Min RMSRE | 2.95% | **2.00%** |
+| Std Z range | 0.92 – 1.08 | 0.74 – 1.11 |
+| Windows meeting <5% target | 52% (12/23) | **78% (18/23)** |
+
+**Remaining 3D Matern failures (5 windows), by root cause:**
+
+- **Early-Jan window (day ~5835):** Only 50 obs vs. 136–155 in all other windows. Sparse
+  data makes kernel estimation unreliable regardless of kernel type. Both models fail here.
+- **Summer cluster (days ~6030–6045, ~July 2015):** Anisotropy ratio ~0.26–0.36, maximum
+  eddy season, zonal atmospheric chaos. Std Z slightly high (1.11 = mildly overconfident).
+  Likely physically irreducible at a 30-day window width.
+- **Spring window (days ~5910–5925):** Borderline failure (5.6%), close to target.
+
+**Underconfidence note (3D Matern):** Days 6090–6105 (late Sep) have Std Z = 0.74 — error
+bars larger than actual errors. RMSRE is 3.0% there so predictions are good; the model is
+just being conservative. Flag for review if it persists in deeper layers.
+
+**Next steps recorded in Priority 1 of AE_claude_todo.md.**
+
+---
+
+## 2026-03-25 — Session 6 (gaussian-kriging-rework branch created)
+
+**What was done:**
+
+1. **Created new branch `gaussian-kriging-rework`** from `main` — isolated workspace for experimenting with the Gaussian kernel and kriging run logic without touching the stable main branch. Once the new approach is validated, `main` will be merged into this branch (or this branch will become the new baseline).
+
+---
+
 ## 2026-03-20 — Session 5 (registry corrections + get_vertical_layers)
 
 **What was done:**

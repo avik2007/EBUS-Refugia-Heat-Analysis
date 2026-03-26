@@ -12,6 +12,22 @@ ArgoEBUSAnalysis/
 │   │
 │   ├── 03_ae_inspect_data.py             # Step 2: Downloads processed OHC parquet from
 │   │                                      #   S3 and generates diagnostic PNG plots.
+│   │                                      #   Uses 2D RBF kernel (production baseline).
+│   │
+│   ├── 03b_ae_plot_physics.py            # Regenerates physics PNGs from the 03 audit
+│   │                                      #   CSV without re-running kriging.
+│   │
+│   ├── 04_ae_testmatern_and_3dwindow.py  # Loads same S3 data as script 03 and runs
+│   │                                      #   TWO GP variants for direct comparison:
+│   │                                      #   A) 2D RBF baseline (matches script 03)
+│   │                                      #   B) 3D Matern(nu=0.5) — Exponential kernel
+│   │                                      #      with time as a third GP dimension.
+│   │                                      #   Saves each to its own named folder and
+│   │                                      #   prints a side-by-side RMSRE summary.
+│   │
+│   ├── 04b_ae_plot_matern_physics.py     # Regenerates physics PNGs from both 04
+│   │                                      #   audit CSVs without re-running kriging.
+│   │                                      #   Also saves a combined RMSRE comparison PNG.
 │   │
 │   ├── test_pipeline.py                   # Integration tests for the cloud pipeline.
 │   │
@@ -68,8 +84,12 @@ ArgoEBUSAnalysis/
 │
 ├── AEResults/
 │   ├── aeplots/                           # Output PNGs — e.g., ebus_2015_trend.png
+│   │   └── snapshot_{run_id}/            # Kriging snapshot PNGs, one per window center.
 │   ├── aeresults/                         # Output parquet/CSV results files.
 │   └── aelogs/                            # Per-run audit CSVs, CV pickles, and physics history PNGs.
+│       ├── {run_id}/                      # Script 03 output (2D RBF, production).
+│       ├── {run_id}_2d_rbf/              # Script 04 Run A: 2D RBF baseline for comparison.
+│       └── {run_id}_3d_matern05/         # Script 04 Run B: 3D Matern(nu=0.5) results.
 │
 ├── CCS_OHC_Deep_GSW.csv                   # Processed OHC result: deep layer (500-1000m)
 │                                          #   for California Current System.
@@ -83,6 +103,24 @@ ArgoEBUSAnalysis/
 │   ├── citationExport-2007jcli1824.1...  # Journal of Climate 2007 paper citation.
 │   ├── export-ris.txt                     # Exported bibliography.
 │   └── pericles_21699291120.ris           # Additional paper reference.
+│
+├── argo_claude_actions/
+│   ├── AE_claude_todo.md                  # Forward-looking task list with human notes.
+│   ├── AE_claude_recentactions.md         # Log of completed Claude sessions.
+│   ├── AE_claude_lessons.md               # Hard-won implementation lessons.
+│   └── AE_plan_3d_gpr_matern.md          # Design plan: 3D spatio-temporal GP with
+│                                          #   Exponential (Matern nu=0.5) and RBF kernels.
+│                                          #   Documents math, scaling approach, and what
+│                                          #   changed in argoebus_gp_physics.py.
+│
+├── argo_gemini_actions/                   # Gemini LLM research logs.
+│   ├── AE_gemini_todo.md                  # Forward-looking research/science task list.
+│   ├── AE_gemini_recentactions.md         # Log of completed Gemini research sessions.
+│   └── AE_gemini_lessons.md              # Hard-won scientific and research lessons.
+│
+├── AE_LLM_Research/                       # Raw Gemini conversation exports (excluded from git).
+│                                          #   Stores full text logs of Gemini science planning
+│                                          #   sessions for reference and reproducibility.
 │
 ├── ae_file_structure.txt                  # This file. Visual map of the project layout.
 ├── ocean_env_clean.yml                    # Conda environment spec for local development.

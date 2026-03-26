@@ -17,12 +17,12 @@ import scipy.stats as stats
 from sklearn.model_selection import KFold, LeaveOneGroupOut
 from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel
+from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel, Matern
 from sklearn.metrics.pairwise import haversine_distances
 from sklearn.model_selection import KFold, LeaveOneGroupOut
 from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel
+from sklearn.gaussian_process.kernels import ConstantKernel, RBF, WhiteKernel, Matern
 from sklearn.model_selection import train_test_split
 import warnings
 
@@ -970,8 +970,30 @@ def analyze_rolling_correlations(df,
                                  # --- AUTO-CALIBRATION (RELIABILITY CONTROL) ---
                                  auto_calibrate=True,
                                  target_z_bounds=(0.9, 1.1),
-                                 target_rmsre=0.05,           
-                                 max_adjust_steps=3
+                                 target_rmsre=0.05,
+                                 max_adjust_steps=3,
+
+                                 # --- 3D SPATIO-TEMPORAL MODE ---
+                                 mode='2D',
+                                 # '2D': original lat/lon only (default, backward-compatible).
+                                 # '3D': appends time_days as a third GP dimension.
+                                 #       The time coordinate is normalized per rolling window
+                                 #       so that window center = 0 and edges = ±1.
+                                 kernel_type='rbf',
+                                 # 'rbf'      : Squared Exponential / RBF kernel (default).
+                                 #              Infinitely differentiable; assumes smooth fields.
+                                 # 'matern0.5': Exponential kernel (Matern nu=0.5).
+                                 #              Once differentiable; allows sharper fronts.
+                                 #              Both options produce identical output columns,
+                                 #              so you can call this function twice with different
+                                 #              kernel_type values and compare results_df directly.
+                                 time_ls_bounds_days=(2.0, 30.0),
+                                 # Physical lower/upper bound (in days) on the time length scale
+                                 # that the optimizer is allowed to find. Only used in mode='3D'.
+                                 # Lower bound (~2 days): prevents the model treating all obs as
+                                 # temporally uncorrelated (faster than ocean adjustment timescales).
+                                 # Upper bound (~30 days): prevents the model ignoring time entirely
+                                 # and degenerating to a 2D spatial climatology.
                                  ):
     """
     Performs a "Rolling Window" Gaussian Process analysis to assess how ocean physics 
@@ -1033,13 +1055,60 @@ def analyze_rolling_correlations(df,
             current_t += step_size_days
             continue
             
-        X = df_slice[feature_cols].values
+        # --- FEATURE ASSEMBLY & SCALING ---
+        # In 3D mode we extend the feature set with a time coordinate.
+        # The spatial columns use a StandardScaler (center + normalize by std dev).
+        # The time column uses a window-relative normalization: the window center
+        # maps to 0 and the window edges map to ±1. This keeps the time coordinate
+        # dimensionless and decoupled from the spatial scale, regardless of units.
+        # The two scalers are kept separate so we can recover physical length scales
+        # after optimization (spatial: multiply by scaler_X.scale_; time: multiply
+        # by half_window).
+
+        spatial_cols = list(feature_cols)  # resolved spatial column names for this window
+        window_center = current_t + window_size_days / 2.0
+
+        if mode == '3D':
+            # Find the time column available in df_slice. Prefer 'time_days'; fall
+            # back to time_col (the rolling-window time column, e.g. 'time_bin').
+            time_dim_col = None
+            for candidate in ['time_days', time_col]:
+                if candidate in df_slice.columns and candidate not in spatial_cols:
+                    time_dim_col = candidate
+                    break
+            if time_dim_col is None:
+                raise ValueError(
+                    f"mode='3D' requires a time column in df_slice. "
+                    f"Tried 'time_days' and '{time_col}'. "
+                    f"Columns available: {list(df_slice.columns)}"
+                )
+            all_feature_cols = spatial_cols + [time_dim_col]
+        else:
+            time_dim_col = None
+            all_feature_cols = spatial_cols
+
         y = df_slice[target_col].values
-        
-        scaler_X = StandardScaler()
         scaler_y = StandardScaler()
-        X_scaled = scaler_X.fit_transform(X)
         y_scaled = scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
+
+        # Spatial scaling: StandardScaler over lat/lon columns only.
+        X_spatial = df_slice[spatial_cols].values
+        scaler_X = StandardScaler()
+        X_spatial_scaled = scaler_X.fit_transform(X_spatial)
+
+        if mode == '3D':
+            # Time normalization: (t - window_center) / half_window ∈ [-1, +1].
+            # Physical recovery: l_t_phys = l_t_scaled * half_window (days).
+            half_window = window_size_days / 2.0
+            time_raw = df_slice[time_dim_col].values
+            time_scaled = (time_raw - window_center) / half_window
+            X_scaled = np.column_stack([X_spatial_scaled, time_scaled])
+            # phys_scale_X: conversion factor from scaled length to physical length,
+            # one entry per feature dimension in all_feature_cols order.
+            phys_scale_X = np.append(scaler_X.scale_, half_window)
+        else:
+            X_scaled = X_spatial_scaled
+            phys_scale_X = scaler_X.scale_
         
         if len(df_slice) < 20:
              if len(df_slice) < 5:
@@ -1054,24 +1123,57 @@ def analyze_rolling_correlations(df,
             )
         
         # --- 3. CONFIGURE KERNEL ---
+        # Bounds are in SCALED (dimensionless) units throughout.
         if auto_tune:
-            l_bounds = (1e-2, 5) 
+            spatial_l_bounds = (1e-2, 5)
             n_bounds = (1e-5, 1e1)
             optimizer_restarts = tune_iterations
         else:
-            l_bounds = "fixed"
+            spatial_l_bounds = "fixed"
             n_bounds = "fixed"
             optimizer_restarts = 0
-            
-        if isinstance(length_scale_val, list):
-            ls_init = length_scale_val 
-        else:
-            ls_init = [length_scale_val] * len(feature_cols)
 
-        k = ConstantKernel(1.0, constant_value_bounds="fixed") * \
-            RBF(length_scale=ls_init, length_scale_bounds=l_bounds) + \
-            WhiteKernel(noise_level=noise_val, noise_level_bounds=n_bounds)
-            
+        # Build the initial length-scale vector. One entry per spatial feature.
+        if isinstance(length_scale_val, list):
+            ls_init = list(length_scale_val)
+        else:
+            ls_init = [length_scale_val] * len(spatial_cols)
+
+        if mode == '3D':
+            # Append an initial time length scale of 1.0 (normalized units).
+            # The optimizer will move it within time_ls_bounds_days below.
+            # If auto_tune=False, this fixed 1.0 means one half-window of memory.
+            ls_init = ls_init + [1.0]
+
+        # Build per-dimension bounds for the optimizer.
+        # In 3D mode, the time dimension gets tighter physical-day bounds converted
+        # to normalized units: l_t_normalized = l_t_days / half_window.
+        if mode == '3D' and auto_tune:
+            half_window = window_size_days / 2.0
+            t_lo = time_ls_bounds_days[0] / half_window  # e.g. 2/45 ≈ 0.044 for W=90
+            t_hi = time_ls_bounds_days[1] / half_window  # e.g. 30/45 ≈ 0.667 for W=90
+            l_bounds = [spatial_l_bounds] * len(spatial_cols) + [(t_lo, t_hi)]
+        else:
+            # 2D mode, or 3D with auto_tune=False (all bounds "fixed").
+            l_bounds = spatial_l_bounds
+
+        def _build_kernel(ls, n_level, ls_bnd, n_bnd):
+            # Kernel factory: returns RBF or Matern(nu=0.5) depending on kernel_type.
+            # Defined as a closure so it captures kernel_type from the outer scope.
+            # Both kernels produce identical output column names; callers can run this
+            # function twice with different kernel_type values and compare results_df.
+            if kernel_type == 'matern0.5':
+                # Exponential kernel: k(r) = exp(-r), r = sqrt(Σ((xi-xi')/li)²).
+                # Allows sharper predicted fronts than RBF (less smooth covariance).
+                spatial_kernel = Matern(length_scale=ls, length_scale_bounds=ls_bnd, nu=0.5)
+            else:
+                # Default: RBF / Squared Exponential: k(r) = exp(-r²/2).
+                spatial_kernel = RBF(length_scale=ls, length_scale_bounds=ls_bnd)
+            return (ConstantKernel(1.0, constant_value_bounds="fixed") *
+                    spatial_kernel +
+                    WhiteKernel(noise_level=n_level, noise_level_bounds=n_bnd))
+
+        k = _build_kernel(ls_init, noise_val, l_bounds, n_bounds)
         gp = GaussianProcessRegressor(kernel=k, n_restarts_optimizer=optimizer_restarts, alpha=0.0)
         
         try:
@@ -1111,17 +1213,20 @@ def analyze_rolling_correlations(df,
                 new_noise = current_noise * correction_factor
                 current_noise = new_noise
                 
-                k_calibrated = ConstantKernel(1.0, constant_value_bounds="fixed") * \
-                               RBF(length_scale=current_length_scale, length_scale_bounds="fixed") + \
-                               WhiteKernel(noise_level=new_noise, noise_level_bounds="fixed")
-                
+                # Re-build with the same kernel type, fixing all parameters so only
+                # noise changes. Uses _build_kernel so RBF/Matern choice is preserved.
+                k_calibrated = _build_kernel(current_length_scale, new_noise, "fixed", "fixed")
                 gp = GaussianProcessRegressor(kernel=k_calibrated, optimizer=None, alpha=0.0)
                 gp.fit(X_train, y_train)
             
             # --- 6. RECORD RESULTS, FLOAT AUDIT, & ANISOTROPY ---
-            window_center = current_t + (window_size_days/2)
-            learned_ls_phys = current_length_scale * scaler_X.scale_
-            
+            # window_center was already computed during scaling; reuse it here.
+            # phys_scale_X covers all dimensions in all_feature_cols order:
+            #   [σ_lat, σ_lon, half_window] in 3D mode, [σ_lat, σ_lon] in 2D.
+            # So learned_ls_phys[i] gives the physical length scale for dimension i
+            # in degrees (spatial) or days (time).
+            learned_ls_phys = current_length_scale * phys_scale_X
+
             # Audit unique floats
             n_bins = len(df_slice)
             n_floats = df_slice[id_col].nunique() if id_col else "???"
@@ -1135,19 +1240,22 @@ def analyze_rolling_correlations(df,
                 'n_bins': n_bins,
                 'n_floats': n_floats
             }
-            
-            # Save specific dimension scales (Lat vs Lon)
-            for i, col in enumerate(feature_cols):
+
+            # Write one scale entry per feature dimension.
+            # In 3D mode this automatically creates 'scale_time_days' (or whatever
+            # the time column is named) alongside the spatial scale columns.
+            for i, col in enumerate(all_feature_cols):
                 record[f'scale_{col}'] = learned_ls_phys[i]
-            
-            # --- NEW: ANISOTROPY AUDIT ---
-            # Calculates the ratio of the Latitudinal scale to the Longitudinal scale.
-            # In EBUS regions:
-            # Ratio > 1.0: Flow-dominated (long-range memory along the coast)
-            # Ratio < 1.0: Eddy-dominated (zonal heterogeneity/atmospheric interference)
-            lat_key = next((c for c in feature_cols if 'lat' in c), None)
-            lon_key = next((c for c in feature_cols if 'lon' in c), None)
-            
+
+            # --- ANISOTROPY AUDIT ---
+            # Ratio = Lat_Scale / Lon_Scale.
+            # > 1.0: meridional current dominates (flow-aligned memory).
+            # < 1.0: zonal/atmospheric forcing dominates (eddy-shredded).
+            # Uses all_feature_cols so the lookup works whether the caller passed
+            # 'lat'/'lon' or 'lat_bin'/'lon_bin'.
+            lat_key = next((c for c in all_feature_cols if 'lat' in c), None)
+            lon_key = next((c for c in all_feature_cols if 'lon' in c), None)
+
             if lat_key and lon_key:
                 l_lat = record[f'scale_{lat_key}']
                 l_lon = record[f'scale_{lon_key}']
@@ -1156,12 +1264,11 @@ def analyze_rolling_correlations(df,
                 record['anisotropy_ratio'] = np.nan
 
             history.append(record)
-            
+
             # --- 7. PRINT STATUS ---
             icon_z = "✅" if (best_std_z >= target_z_bounds[0] and best_std_z <= target_z_bounds[1]) else "⚠️"
             icon_qual = "✅" if best_rmsre <= target_rmsre else "❌"
-            
-            # Added Anisotropy to the terminal feedback
+
             print(f"   Window {int(current_t)}-{int(t_end)}: {icon_qual} RMSRE={best_rmsre:.3%} | "
                   f"{icon_z} Z={best_std_z:.2f} | Bins={n_bins} | Floats={n_floats} | "
                   f"Ratio={record['anisotropy_ratio']:.2f}")
@@ -1388,9 +1495,11 @@ def plot_physics_history(results_df, cv_details=None, time_unit='days',
     # --- PLOT 1: SPATIAL SCALES (The Physics) ---
     # Shows how lat and lon correlation lengths evolve over time.
     # Lon >> Lat indicates zonal/atmospheric forcing; convergence signals regime change.
+    # Excludes the time scale column (if present) — that gets its own plot (Plot 5).
     fig1, ax1 = plt.subplots(figsize=(12, 4))
-    scale_cols = [c for c in results_df.columns if 'scale_' in c]
-    for col in scale_cols:
+    spatial_scale_cols = [c for c in results_df.columns
+                          if 'scale_' in c and 'time' not in c and 'day' not in c]
+    for col in spatial_scale_cols:
         label = col.replace('scale_', '').title()
         ax1.plot(t, results_df[col], marker='o', linestyle='-', linewidth=2, label=f"{label} Scale")
     ax1.set_ylabel("Correlation Length (Degrees)")
@@ -1433,19 +1542,50 @@ def plot_physics_history(results_df, cv_details=None, time_unit='days',
     # < 1.0: zonal/atmospheric forcing dominates (eddy-shredded, Skin Layer expected behavior)
     # > 1.0: meridional current flow dominates (Ekman transport pathway active)
     # The stealth warming hypothesis predicts this ratio increases with depth.
-    anisotropy = results_df['scale_lat_bin'] / results_df['scale_lon_bin']
-    fig4, ax4 = plt.subplots(figsize=(12, 4))
-    ax4.plot(t, anisotropy, color='darkorange', marker='^', linestyle='-',
-             linewidth=2, label='Anisotropy Ratio (Lat/Lon)')
-    ax4.axhline(1.0, color='gray', linestyle='--', alpha=0.7, label='Isotropic (1.0)')
-    ax4.axhspan(1.0, max(anisotropy.max() + 0.1, 1.1), color='darkorange', alpha=0.07,
-                label='Meridional dominance zone')
-    ax4.set_ylabel("Anisotropy Ratio")
-    ax4.set_xlabel(f"Time ({time_unit})")
-    ax4.set_title("Anisotropy Ratio: Meridional vs. Zonal Dominance (Stealth Signal)")
-    ax4.grid(True, linestyle='--', alpha=0.6)
-    ax4.legend()
-    plt.tight_layout()
-    _save_fig(fig4, "anisotropy")
+    # Resolve lat/lon scale column names dynamically so this works whether the caller
+    # used 'lat'/'lon' or 'lat_bin'/'lon_bin' as feature columns.
+    _lat_key = next((c for c in results_df.columns if 'scale_lat' in c), None)
+    _lon_key = next((c for c in results_df.columns if 'scale_lon' in c), None)
+
+    if _lat_key is None or _lon_key is None:
+        print("  Warning: anisotropy plot skipped (could not find scale_lat* and scale_lon* columns).")
+    else:
+        anisotropy = results_df[_lat_key] / results_df[_lon_key]
+        fig4, ax4 = plt.subplots(figsize=(12, 4))
+        ax4.plot(t, anisotropy, color='darkorange', marker='^', linestyle='-',
+                 linewidth=2, label='Anisotropy Ratio (Lat/Lon)')
+        ax4.axhline(1.0, color='gray', linestyle='--', alpha=0.7, label='Isotropic (1.0)')
+        ax4.axhspan(1.0, max(anisotropy.max() + 0.1, 1.1), color='darkorange', alpha=0.07,
+                    label='Meridional dominance zone')
+        ax4.set_ylabel("Anisotropy Ratio")
+        ax4.set_xlabel(f"Time ({time_unit})")
+        ax4.set_title("Anisotropy Ratio: Meridional vs. Zonal Dominance (Stealth Signal)")
+        ax4.grid(True, linestyle='--', alpha=0.6)
+        ax4.legend()
+        plt.tight_layout()
+        _save_fig(fig4, "anisotropy")
+
+    # --- PLOT 5: TEMPORAL PERSISTENCE (3D mode only) ---
+    # The time length scale tells us how many days of memory the ocean has in this
+    # rolling window. High values = slow-moving, persistent water masses (expected
+    # to increase with depth under the stealth warming hypothesis). Low values =
+    # rapidly evolving surface conditions.
+    # This plot only appears when analyze_rolling_correlations was run with mode='3D'.
+    time_scale_key = next(
+        (c for c in results_df.columns if 'scale_time' in c or 'scale_day' in c), None
+    )
+    if time_scale_key is not None:
+        fig5, ax5 = plt.subplots(figsize=(12, 4))
+        ax5.plot(t, results_df[time_scale_key], color='steelblue', marker='v',
+                 linestyle='-', linewidth=2, label='Temporal Persistence')
+        # Shade the physical constraint window that was used during optimization.
+        ax5.axhspan(2, 30, color='steelblue', alpha=0.08, label='Optimization bounds (2–30 days)')
+        ax5.set_ylabel("Temporal Length Scale (days)")
+        ax5.set_xlabel(f"Time ({time_unit})")
+        ax5.set_title("Temporal Persistence: Ocean Memory Duration (3D GP mode)")
+        ax5.grid(True, linestyle='--', alpha=0.6)
+        ax5.legend()
+        plt.tight_layout()
+        _save_fig(fig5, "temporal_persistence")
 
     plt.show()
