@@ -24,6 +24,27 @@ Signal: Source Layer warming faster than Background.
 
 ---
 
+## Autonomy & Approval Protocol
+
+**Claude may act autonomously on implementation only after a detailed plan has been explicitly approved by the user in full.**
+
+### Before approval — always required:
+- Present the complete plan step by step, in maximum detail. Every file to be touched, every function to be changed, every logic decision. No vagueness.
+- Wait for the user to say the plan is approved before touching any code, config, or file.
+- Even small sub-steps within an approved plan must be announced verbosely before execution: "I am now doing Step 2: modifying `foo.py:42` to change X because Y."
+
+### Absolute hard stops — never do these without explicit per-instance permission:
+- **Creating new git branches.**
+- **Deleting any file or directory.**
+- **Implementing any plan that has not been explicitly approved.**
+
+### During execution of an approved plan:
+- Narrate every intermediate step before taking it, even if it seems obvious.
+- If something unexpected comes up mid-plan (file missing, logic doesn't match expectation, new decision needed), stop and report before proceeding.
+- Do not batch steps silently. One step, announce it, execute it, confirm, then move to the next.
+
+---
+
 ## Scientific Context
 
 - **Gemini**: science planning and hypothesis. **Claude**: implementation and debugging. Don't second-guess the science; flag implementation risks.
@@ -63,5 +84,7 @@ Key directories:
 **Pipeline tools share a common signature**: every analysis/diagnostic function must be importable with `(region, lat_step, lon_step, time_step, depth_range)` — matching `run_diagnostic_inspection()`. No module-level constants. Enables serial calls across regions/layers in one script.
 
 **Completed tasks leave `AE_claude_todo.md`**: record them in `AE_claude_recentactions.md`. Todo = forward-looking only.
+
+**`/interrupt` command**: type `/interrupt` at any time to halt execution and write a checkpoint to `argo_claude_actions/checkpoint.md`. Resumes cleanly in the next message.
 
 **`AEResults/` is at `ArgoEBUSAnalysis/`**, not inside `ArgoEBUSCloud/`. Paths must traverse up: `os.path.join(base_dir, "..", "AEResults", ...)`.

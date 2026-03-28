@@ -964,9 +964,17 @@ def analyze_rolling_correlations(df,
                                  noise_val=0.1,               
                                  
                                  # --- ROLLING WINDOW CONFIG ---
-                                 window_size_days=90, 
+                                 window_size_days=90,
                                  step_size_days=30,
-                                 
+                                 min_bins=10,
+                                 # Minimum number of spatial bins required to attempt a GP fit.
+                                 # Windows below this threshold are skipped silently (no row
+                                 # added to results_df). Default 10 preserves backward compatibility.
+                                 # Raise to ~80 to enforce a statistical floor and discard
+                                 # underdetermined windows (e.g. early-season sparse sampling)
+                                 # where the GP has too few degrees of freedom to constrain
+                                 # the kernel reliably.
+
                                  # --- AUTO-CALIBRATION (RELIABILITY CONTROL) ---
                                  auto_calibrate=True,
                                  target_z_bounds=(0.9, 1.1),
@@ -1051,7 +1059,11 @@ def analyze_rolling_correlations(df,
         mask = (df[time_col] >= current_t) & (df[time_col] < t_end)
         df_slice = df[mask].copy()
         
-        if len(df_slice) < 10: 
+        if len(df_slice) < min_bins:
+            # This window has fewer spatial bins than the minimum threshold.
+            # Fitting a GP here would produce unreliable kernel estimates
+            # (underdetermined: too few spatial constraints for the optimizer).
+            # Skip silently — no row is added to results_df for this window.
             current_t += step_size_days
             continue
             
@@ -1587,5 +1599,107 @@ def plot_physics_history(results_df, cv_details=None, time_unit='days',
         ax5.legend()
         plt.tight_layout()
         _save_fig(fig5, "temporal_persistence")
+
+    plt.show()
+
+
+def plot_float_coverage(results_df, min_bins_threshold=10, save_dir=None, run_id=None,
+                        time_unit='days'):
+    """
+    Diagnostic plot: number of Argo float observations (spatial bins) per rolling
+    window as a function of time, overlaid with the per-window RMSRE.
+
+    Purpose:
+        Makes the relationship between data sparsity and model quality immediately
+        visible. A window with n_bins << the typical count (~140) is a warning sign
+        that the GP kernel was underdetermined — the RMSRE failure may be a data
+        problem rather than a physics problem.
+
+    Layout:
+        Left Y axis  — n_bins (bar chart, grey): observation count per window.
+        Right Y axis — RMSRE * 100 (scatter): green dots where RMSRE <= 5%,
+                       red dots where RMSRE > 5% (failing the target).
+        Horizontal dashed line at min_bins_threshold: the skip floor used by
+        analyze_rolling_correlations. Any bar below this line would have been
+        skipped entirely, so it labels the effective exclusion zone.
+
+    Parameters
+    ----------
+    results_df : pd.DataFrame
+        Output from analyze_rolling_correlations. Must contain columns:
+        'window_center', 'n_bins', 'rmsre'.
+    min_bins_threshold : int
+        The min_bins value that was used in the analysis run. Drawn as a
+        reference line so sparse windows are identifiable at a glance.
+    save_dir : str or None
+        Directory to save the PNG. If None, not saved.
+    run_id : str or None
+        Run identifier used in the output filename. If None, not saved.
+    time_unit : str
+        Label for the x-axis (passed through for consistency with other plots).
+    """
+    t          = results_df['window_center']
+    n_bins     = results_df['n_bins']
+    rmsre_pct  = results_df['rmsre'] * 100   # convert to % for legibility
+
+    # Separate passing (<=5%) and failing (>5%) windows for color-coded scatter.
+    target_pct = 5.0
+    mask_pass  = rmsre_pct <= target_pct
+    mask_fail  = rmsre_pct >  target_pct
+
+    fig, ax_bins = plt.subplots(figsize=(14, 5))
+
+    # --- LEFT AXIS: observation count (bars) ---
+    # Bar width slightly narrower than the step interval (assumed ~15 days) so
+    # adjacent bars don't bleed into each other visually.
+    ax_bins.bar(t, n_bins, width=12, color='lightsteelblue', edgecolor='steelblue',
+                linewidth=0.6, alpha=0.8, label='Obs. count (n_bins)')
+
+    # Draw the skip threshold as a horizontal reference line.
+    # Any bar below this line was (or would be) silently skipped by analyze_rolling_correlations.
+    ax_bins.axhline(min_bins_threshold, color='darkred', linestyle='--', linewidth=1.2,
+                    label=f'min_bins threshold ({min_bins_threshold})')
+
+    ax_bins.set_ylabel("Spatial Bins (Obs. Count)", color='steelblue')
+    ax_bins.tick_params(axis='y', labelcolor='steelblue')
+    ax_bins.set_xlabel(f"Window Center ({time_unit})")
+    ax_bins.set_title("Float Coverage vs. RMSRE per Rolling Window\n"
+                      "(bars = obs. count; dots = RMSRE quality; red = failing > 5%)")
+
+    # --- RIGHT AXIS: RMSRE % (scatter) ---
+    ax_rmsre = ax_bins.twinx()
+
+    # Green dots: windows that meet the 5% target.
+    if mask_pass.any():
+        ax_rmsre.scatter(t[mask_pass], rmsre_pct[mask_pass],
+                         color='green', s=60, zorder=5, label='RMSRE ≤ 5% (pass)')
+
+    # Red dots with black edge: windows that fail the target — these need attention.
+    if mask_fail.any():
+        ax_rmsre.scatter(t[mask_fail], rmsre_pct[mask_fail],
+                         color='red', edgecolors='black', linewidths=0.8,
+                         s=80, zorder=6, label='RMSRE > 5% (fail)')
+
+    # Shade the 5% target line so the pass/fail boundary is immediately clear.
+    ax_rmsre.axhline(target_pct, color='grey', linestyle=':', linewidth=1.0,
+                     label='5% RMSRE target')
+
+    ax_rmsre.set_ylabel("RMSRE (%)", color='dimgrey')
+    ax_rmsre.tick_params(axis='y', labelcolor='dimgrey')
+
+    # Combine legends from both axes into one box.
+    lines_bins,  labels_bins  = ax_bins.get_legend_handles_labels()
+    lines_rmsre, labels_rmsre = ax_rmsre.get_legend_handles_labels()
+    ax_bins.legend(lines_bins + lines_rmsre, labels_bins + labels_rmsre,
+                   loc='upper right', fontsize=8)
+
+    ax_bins.grid(True, linestyle='--', alpha=0.4)
+    plt.tight_layout()
+
+    # Save if paths were provided.
+    if save_dir is not None and run_id is not None:
+        path = os.path.join(save_dir, f"float_coverage_{run_id}.png")
+        fig.savefig(path, dpi=150, bbox_inches='tight')
+        print(f"  Saved: {path}")
 
     plt.show()
