@@ -1,8 +1,21 @@
 # Claude TODO — ArgoEBUSAnalysis
 
-Last updated: 2026-03-27
+Last updated: 2026-03-30
+
+**[Gemini Diagnosis]:** The time persistence oscillation in the Skin Layer is likely a **sampling aliasing effect**. The 10-day Argo float cycle and 15-day window step create a 30-day (2-window) repetition in the sampling time distribution relative to the window center. In the low-coherence Skin Layer, windows with larger gaps between float surfacings and the center lose temporal information, causing the GP to "pin" to the upper bound.
 
 Human Notes:
+ - **[For Gemini]** The 3D Matern(nu=0.5) GP is showing a striking alternating pattern
+   in its time length scale (scale_time_days): every other rolling window pins hard to
+   the upper bound (45d or 30d depending on the bound set), while the intervening windows
+   find a free value. This is not a bounds issue — tightening from tb=45 to tb=30 just
+   moves the ceiling without fixing the alternation. The windows themselves are overlapping
+   15-day steps through 2015 CCS data. Is there a physical or statistical explanation for
+   why alternate windows would have fundamentally different temporal correlation structure?
+   Could this reflect a real oceanographic signal (e.g., spring/neap tidal aliasing, eddy
+   phase alternation), or is it a symptom of the 3D GP mode being ill-suited to the Skin
+   Layer where atmospheric forcing dominates and temporal coherence is low?
+
  - I want to work out the moving window, in such a way that I can study
    time correlations and spatial correlations. This will hopefully allow
    me to bring down the RMSRE.
@@ -16,19 +29,13 @@ Human Notes:
 
 ## Priority 1: RMSRE Optimization
 
-- [ ] **Adopt C2 config (window=45) as the new standard for Skin Layer**
-  - Update `03_ae_inspect_data.py` to use `window_size_days=45, time_ls_bounds_days=(2.0, 45.0)`
-  - Re-run Script 03 to regenerate the canonical Skin Layer audit CSV with the new config
-  - Update `ae_file_structure.txt` and any hardcoded window references
 
-- [ ] **Investigate 3D Matern Std Z underconfidence (min 0.74)**
-  - Days 6090–6105 (late Sep / early Oct 2015): RMSRE is actually great (3.0%) but
-    Std Z = 0.74, meaning the model's error bars are too large relative to actual errors.
-  - Confirmed persistent: C2 (window=45) shows the same 0.74 at the same windows.
-    Widening the window does not resolve the underconfidence.
-  - Defer to Source Layer run — if Std Z is still < 0.85 there, investigate the
-    auto-calibration noise adjustment bounds as the likely cause.
-- [  ] **Merge kriging rework branch back to main**
+- [ ] **Time persistence oscillation — pending Gemini input (see Human Notes)**
+  - C5 (w45, tb=30) confirmed the alternation is structural, not a bounds artifact.
+    Tightening tb=45 → tb=30 moved the ceiling but the every-other-window pin persists.
+  - C2 (w45, tb=45, 83% pass) accepted as canonical pending Gemini's diagnosis.
+  - Do not pursue further bounds adjustments without a physical hypothesis.
+
 ---
 
 ## Priority 2: Cloud Runs (Require AWS)
@@ -41,6 +48,15 @@ Human Notes:
 - [ ] **Background Layer cloud run** — Script 02 with `depth_range=(500, 1000)`
   - This is the deep ocean control/baseline
   - Needed to establish the "background" warming rate for comparison
+
+- [ ] **Investigate 3D Matern Std Z underconfidence (min 0.74)**
+  - Days 6090–6105 (late Sep / early Oct 2015): RMSRE is actually great (3.0%) but
+    Std Z = 0.74, meaning the model's error bars are too large relative to actual errors.
+  - Confirmed persistent: C2 (window=45) shows the same 0.74 at the same windows.
+  - RMSRE is small in all affected windows — this is a conservative/safe failure mode,
+    not a false-positive risk. Defer until after Source Layer analysis.
+  - If Std Z is still < 0.85 in the Source Layer, investigate auto-calibration noise
+    adjustment bounds as the likely cause.
 
 ---
 

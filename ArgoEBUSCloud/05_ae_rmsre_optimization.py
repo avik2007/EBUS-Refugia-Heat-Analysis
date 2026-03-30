@@ -17,12 +17,14 @@ to reduce RMSRE in two identified failure clusters:
 
 Variants
 --------
-  C0 (reference) — window=30, min_bins=10, noise=0.1  [loaded from disk, not re-run]
-  C1             — window=30, min_bins=80, noise=0.1  [skip sparse Jan window]
-  C2             — window=45, min_bins=10, noise=0.1  [wider window -> more Jan floats]
-  C3             — window=20, min_bins=10, noise=0.1  [shorter window -> avoid eddy bridge]
-  C4             — window=30, min_bins=10, noise=0.5  [higher noise floor for Cluster 2]
+  C0 (reference) — window=30, min_bins=10, noise=0.1, tb=30  [loaded from disk]
+  C1             — window=30, min_bins=80, noise=0.1, tb=30  [skip sparse Jan window]
+  C2             — window=45, min_bins=10, noise=0.1, tb=45  [wider window, bounds=45]
+  C3             — window=20, min_bins=10, noise=0.1, tb=20  [shorter window]
+  C4             — window=30, min_bins=10, noise=0.5, tb=30  [higher noise floor]
+  C5             — window=45, min_bins=10, noise=0.1, tb=30  [wider window, bounds=30]
 
+C1–C4 are loaded from disk if their audit CSVs exist; only C5 is re-run by default.
 All variants use mode='3D', kernel_type='matern0.5', step_size_days=15.
 
 Each run saves an audit CSV and physics PNGs to AEResults/aelogs/{variant}/.
@@ -84,14 +86,16 @@ def run_rmsre_optimization(region="california", lat_step=0.5, lon_step=0.5,
     # are self-documenting without needing to open the audit CSV.
     variant_c0 = f"{run_id}_3d_matern05"        # reference — written by script 04
     variant_c1 = f"{run_id}_3d_m05_minbins80"   # C1: skip sparse windows
-    variant_c2 = f"{run_id}_3d_m05_w45"         # C2: wider window
+    variant_c2 = f"{run_id}_3d_m05_w45"         # C2: wider window, time bounds=45
     variant_c3 = f"{run_id}_3d_m05_w20"         # C3: shorter window
     variant_c4 = f"{run_id}_3d_m05_noise0p5"    # C4: higher noise floor
+    variant_c5 = f"{run_id}_3d_m05_w45_tb30"    # C5: wider window, time bounds=30
 
     os.makedirs(os.path.join(log_root, variant_c1), exist_ok=True)
     os.makedirs(os.path.join(log_root, variant_c2), exist_ok=True)
     os.makedirs(os.path.join(log_root, variant_c3), exist_ok=True)
     os.makedirs(os.path.join(log_root, variant_c4), exist_ok=True)
+    os.makedirs(os.path.join(log_root, variant_c5), exist_ok=True)
     os.makedirs(plot_dir, exist_ok=True)
 
     # --- 2. LOAD DATA FROM S3 ---
@@ -120,117 +124,139 @@ def run_rmsre_optimization(region="california", lat_step=0.5, lon_step=0.5,
         print(f"\nWARNING: C0 reference not found at {c0_csv}")
         print(f"  Run 04_ae_testmatern_and_3dwindow.py first, or comparison table will lack C0.")
 
-    # --- 4. RUN C1: min_bins=80 (skip sparse Jan window) ---
-    # Motivation: the early-Jan window (~day 5835) has only ~50 bins while all
-    # other windows have 136-155. The GP fits ~5-6 spatial modes on 50 points,
-    # which is underdetermined. Raising the threshold removes this window entirely.
-    # If the threshold is too aggressive it may also skip legitimate windows;
-    # the comparison table will show the window count to flag this.
-    print(f"\n{'='*60}")
-    print(f"RUN C1: min_bins=80 — skip underdetermined sparse windows")
-    print(f"{'='*60}")
-    results_c1, _ = analyze_rolling_correlations(
-        df=df,
-        feature_cols=['lat_bin', 'lon_bin'],
-        target_col='ohc_per_m',
-        time_col='time_bin',
-        window_size_days=30,
-        step_size_days=15,
-        min_bins=80,            # raised from default 10 — skips ~50-bin Jan window
-        auto_tune=True,
-        mode='3D',
-        kernel_type='matern0.5',
-        time_ls_bounds_days=(2.0, 30.0),
-    )
-    _save_run(results_c1, variant_c1, log_root, plot_dir)
-    gc.collect()
+    # --- 4. LOAD OR RUN C1: min_bins=80 (skip sparse Jan window) ---
+    # Loads from disk if the audit CSV already exists, avoiding re-running expensive
+    # GPR fits when only a new variant (e.g. C5) needs to be tested.
+    c1_csv = os.path.join(log_root, variant_c1, f"audit_{variant_c1}.csv")
+    if os.path.exists(c1_csv):
+        results_c1 = pd.read_csv(c1_csv)
+        print(f"\nC1 loaded from disk: {c1_csv}")
+    else:
+        print(f"\n{'='*60}")
+        print(f"RUN C1: min_bins=80 — skip underdetermined sparse windows")
+        print(f"{'='*60}")
+        results_c1, _ = analyze_rolling_correlations(
+            df=df,
+            feature_cols=['lat_bin', 'lon_bin'],
+            target_col='ohc_per_m',
+            time_col='time_bin',
+            window_size_days=30,
+            step_size_days=15,
+            min_bins=80,
+            auto_tune=True,
+            mode='3D',
+            kernel_type='matern0.5',
+            time_ls_bounds_days=(2.0, 30.0),
+        )
+        _save_run(results_c1, variant_c1, log_root, plot_dir)
+        gc.collect()
 
-    # --- 5. RUN C2: window_size_days=45 (wider window -> more Jan floats) ---
-    # Motivation: a 45-day window centered on early January extends back into
-    # late December, pulling in more floats that sampled the region in the weeks
-    # before the thin early-Jan period. If this raises n_bins above ~80 for that
-    # window, the GP becomes well-conditioned without dropping the window entirely.
-    # Risk: the wider window now spans 45 days in the July eddy season, potentially
-    # bridging two full eddy lifecycles (~25-30 days each) and increasing Cluster 2 RMSRE.
-    # The time_ls_bounds_days upper limit is raised to match the window width.
+    # --- 5. LOAD OR RUN C2: window_size_days=45, time bounds=45 ---
+    c2_csv = os.path.join(log_root, variant_c2, f"audit_{variant_c2}.csv")
+    if os.path.exists(c2_csv):
+        results_c2 = pd.read_csv(c2_csv)
+        print(f"\nC2 loaded from disk: {c2_csv}")
+    else:
+        print(f"\n{'='*60}")
+        print(f"RUN C2: window_size_days=45 — wider window to boost Jan obs count")
+        print(f"{'='*60}")
+        results_c2, _ = analyze_rolling_correlations(
+            df=df,
+            feature_cols=['lat_bin', 'lon_bin'],
+            target_col='ohc_per_m',
+            time_col='time_bin',
+            window_size_days=45,
+            step_size_days=15,
+            min_bins=10,
+            auto_tune=True,
+            mode='3D',
+            kernel_type='matern0.5',
+            time_ls_bounds_days=(2.0, 45.0),
+        )
+        _save_run(results_c2, variant_c2, log_root, plot_dir)
+        gc.collect()
+
+    # --- 6. LOAD OR RUN C3: window_size_days=20 ---
+    c3_csv = os.path.join(log_root, variant_c3, f"audit_{variant_c3}.csv")
+    if os.path.exists(c3_csv):
+        results_c3 = pd.read_csv(c3_csv)
+        print(f"\nC3 loaded from disk: {c3_csv}")
+    else:
+        print(f"\n{'='*60}")
+        print(f"RUN C3: window_size_days=20 — shorter window to avoid eddy bridging")
+        print(f"{'='*60}")
+        results_c3, _ = analyze_rolling_correlations(
+            df=df,
+            feature_cols=['lat_bin', 'lon_bin'],
+            target_col='ohc_per_m',
+            time_col='time_bin',
+            window_size_days=20,
+            step_size_days=15,
+            min_bins=10,
+            auto_tune=True,
+            mode='3D',
+            kernel_type='matern0.5',
+            time_ls_bounds_days=(2.0, 20.0),
+        )
+        _save_run(results_c3, variant_c3, log_root, plot_dir)
+        gc.collect()
+
+    # --- 7. LOAD OR RUN C4: noise_val=0.5 ---
+    c4_csv = os.path.join(log_root, variant_c4, f"audit_{variant_c4}.csv")
+    if os.path.exists(c4_csv):
+        results_c4 = pd.read_csv(c4_csv)
+        print(f"\nC4 loaded from disk: {c4_csv}")
+    else:
+        print(f"\n{'='*60}")
+        print(f"RUN C4: noise_val=0.5 — higher initial noise floor for Cluster 2")
+        print(f"{'='*60}")
+        results_c4, _ = analyze_rolling_correlations(
+            df=df,
+            feature_cols=['lat_bin', 'lon_bin'],
+            target_col='ohc_per_m',
+            time_col='time_bin',
+            window_size_days=30,
+            step_size_days=15,
+            min_bins=10,
+            noise_val=0.5,
+            auto_tune=True,
+            mode='3D',
+            kernel_type='matern0.5',
+            time_ls_bounds_days=(2.0, 30.0),
+        )
+        _save_run(results_c4, variant_c4, log_root, plot_dir)
+        gc.collect()
+
+    # --- 8. RUN C5: window=45, time_ls_bounds_days=(2.0, 30.0) ---
+    # Motivation: C2 (window=45, bounds=(2.0, 45.0)) showed scale_time_days repeatedly
+    # pinning to the upper bound (45 days = the full window width). When the optimizer
+    # hits the ceiling it is effectively saying "the entire window is one correlated
+    # blob," which prevents the GP from resolving any temporal structure within the
+    # window. The pre-C2 baseline (window=30, bounds=(2.0, 30.0)) was stable because
+    # the upper bound was 30 days, matching the empirical eddy lifecycle.
+    # C5 tests whether keeping the window at 45 (data density benefit) while
+    # constraining the time length scale to ≤30 days (physical realism) gives
+    # stable scale_time_days without sacrificing RMSRE relative to C2.
     print(f"\n{'='*60}")
-    print(f"RUN C2: window_size_days=45 — wider window to boost Jan obs count")
+    print(f"RUN C5: window=45, time_ls_bounds=(2,30) — tighter time bounds")
     print(f"{'='*60}")
-    results_c2, _ = analyze_rolling_correlations(
+    results_c5, _ = analyze_rolling_correlations(
         df=df,
         feature_cols=['lat_bin', 'lon_bin'],
         target_col='ohc_per_m',
         time_col='time_bin',
-        window_size_days=45,    # wider window: half_window=22.5 days
+        window_size_days=45,              # same as C2: wider window for Jan coverage
         step_size_days=15,
         min_bins=10,
         auto_tune=True,
         mode='3D',
         kernel_type='matern0.5',
-        time_ls_bounds_days=(2.0, 45.0),
-        # Upper bound raised proportionally: allows the optimizer to find
-        # correlations up to the full window width (45 days) rather than capping
-        # at 30 days, which would be tighter than the new window half-width.
+        time_ls_bounds_days=(2.0, 30.0),  # upper bound back to 30d: matches eddy lifecycle
     )
-    _save_run(results_c2, variant_c2, log_root, plot_dir)
+    _save_run(results_c5, variant_c5, log_root, plot_dir)
     gc.collect()
 
-    # --- 6. RUN C3: window_size_days=20 (shorter window for eddy season) ---
-    # Motivation: the Cluster 2 failures in July 2015 coincide with peak eddy
-    # activity (anisotropy ratio ~0.26-0.36). A 20-day window is shorter than a
-    # typical California Current eddy lifecycle (~25-30 days), so the GP sees a
-    # more stationary field within each window. Risk: the Jan sparse window will
-    # now see even fewer bins (~30-35) because the window is narrower.
-    # The time_ls_bounds_days upper limit is lowered to match the window width.
-    print(f"\n{'='*60}")
-    print(f"RUN C3: window_size_days=20 — shorter window to avoid eddy bridging")
-    print(f"{'='*60}")
-    results_c3, _ = analyze_rolling_correlations(
-        df=df,
-        feature_cols=['lat_bin', 'lon_bin'],
-        target_col='ohc_per_m',
-        time_col='time_bin',
-        window_size_days=20,    # shorter window: half_window=10 days
-        step_size_days=15,
-        min_bins=10,
-        auto_tune=True,
-        mode='3D',
-        kernel_type='matern0.5',
-        time_ls_bounds_days=(2.0, 20.0),
-        # Upper bound matches window width: prevents the optimizer from finding
-        # a temporal scale longer than the window itself (physically meaningless).
-    )
-    _save_run(results_c3, variant_c3, log_root, plot_dir)
-    gc.collect()
-
-    # --- 7. RUN C4: noise_val=0.5 (higher noise floor for Cluster 2 overconfidence) ---
-    # Motivation: Cluster 2 windows show Std Z ~1.08-1.11, meaning the model is
-    # slightly overconfident (error bars slightly too tight). The auto-calibration
-    # loop adjusts noise upward when std_z > 1.1, but starting from a higher
-    # initial noise_val gives the optimizer a head start from the correct regime.
-    # This is the lowest-risk change: no window count effect, no bridging risk,
-    # and the auto-tuner can still find the optimal value within the noise bounds.
-    print(f"\n{'='*60}")
-    print(f"RUN C4: noise_val=0.5 — higher initial noise floor for Cluster 2")
-    print(f"{'='*60}")
-    results_c4, _ = analyze_rolling_correlations(
-        df=df,
-        feature_cols=['lat_bin', 'lon_bin'],
-        target_col='ohc_per_m',
-        time_col='time_bin',
-        window_size_days=30,
-        step_size_days=15,
-        min_bins=10,
-        noise_val=0.5,          # raised from default 0.1 — higher initial noise floor
-        auto_tune=True,
-        mode='3D',
-        kernel_type='matern0.5',
-        time_ls_bounds_days=(2.0, 30.0),
-    )
-    _save_run(results_c4, variant_c4, log_root, plot_dir)
-    gc.collect()
-
-    # --- 8. COMPARISON SUMMARY TABLE ---
+    # --- 9. COMPARISON SUMMARY TABLE ---
     # Summarize all variants side-by-side. Key metrics:
     #   n_windows   — how many windows were included (C1 may be lower due to min_bins skip)
     #   n_pass      — windows meeting the 5% RMSRE target
@@ -251,9 +277,10 @@ def run_rmsre_optimization(region="california", lat_step=0.5, lon_step=0.5,
     all_variants = [
         ("C0 (ref, w30 mb10 n0.1)", results_c0),
         ("C1 (w30 mb80 n0.1)",      results_c1),
-        ("C2 (w45 mb10 n0.1)",      results_c2),
+        ("C2 (w45 tb45 n0.1)",      results_c2),
         ("C3 (w20 mb10 n0.1)",      results_c3),
         ("C4 (w30 mb10 n0.5)",      results_c4),
+        ("C5 (w45 tb30 n0.1)",      results_c5),
     ]
 
     header = (f"  {'Variant':<28} {'N':>4} {'Pass':>5} "
@@ -313,11 +340,12 @@ def run_rmsre_optimization(region="california", lat_step=0.5, lon_step=0.5,
 
     # One line per variant. Use distinct markers so the plot is readable in greyscale.
     styles = [
-        ('C0 ref',  'black',    'o',  '-',  2.0),
-        ('C1 mb80', 'tab:blue', 's',  '--', 1.5),
-        ('C2 w45',  'tab:green','D',  '-.',  1.5),
-        ('C3 w20',  'tab:red',  '^',  ':',  1.5),
-        ('C4 n0.5', 'tab:purple','v', (0,(5,2)), 1.5),
+        ('C0 ref',       'black',       'o',  '-',       2.0),
+        ('C1 mb80',      'tab:blue',    's',  '--',      1.5),
+        ('C2 w45 tb45',  'tab:green',   'D',  '-.',      1.5),
+        ('C3 w20',       'tab:red',     '^',  ':',       1.5),
+        ('C4 n0.5',      'tab:purple',  'v',  (0,(5,2)), 1.5),
+        ('C5 w45 tb30',  'tab:orange',  'P',  '-',       1.5),
     ]
     for (label_short, rdf), (style_label, color, marker, ls, lw) in zip(all_variants, styles):
         if rdf is None:
@@ -334,7 +362,7 @@ def run_rmsre_optimization(region="california", lat_step=0.5, lon_step=0.5,
     ax.grid(True, linestyle='--', alpha=0.4)
     plt.tight_layout()
 
-    overlay_path = os.path.join(plot_dir, f"rmsre_overlay_{run_id}_c0_c4.png")
+    overlay_path = os.path.join(plot_dir, f"rmsre_overlay_{run_id}_c0_c5.png")
     fig.savefig(overlay_path, dpi=150, bbox_inches='tight')
     print(f"  Saved: {overlay_path}")
     plt.close(fig)

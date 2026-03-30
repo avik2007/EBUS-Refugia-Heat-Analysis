@@ -15,11 +15,6 @@ Last updated: 2026-03-25
 
 ## Priority 2: Branch Merging & Stability
 
-- [ ] **Prepare `gaussian-kriging-rework` Merge**
-  - Audit `argoebus_gp_physics.py` for any remaining 2D/3D backward compatibility debt.
-  - Ensure all 03 and 04 scripts point to the consolidated `ebus_core` logic.
-  - Perform a final "clean room" test of the 3D pipeline before merging into `main`.
-
 - [ ] **Extend `plot_kriging_snapshot` for 3D**
   - Update the snapshot logic to handle the 3rd (time) dimension (likely by slicing at the window center) to allow visual inspection of 3D fits.
 

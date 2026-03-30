@@ -2,6 +2,63 @@
 
 ---
 
+## 2026-03-30 — Session 10 (Canonical Skin Layer script: 3D Matern C2 config)
+
+**What was done:**
+
+1. **Created `05_ae_update_tomatern0.5.py`** — canonical Skin Layer diagnostic script,
+   superseding `03_ae_inspect_data.py`. Adopts the C2 configuration determined optimal
+   by the RMSRE optimization experiment:
+   - `mode='3D'`, `kernel_type='matern0.5'`, `window_size_days=45`,
+     `time_ls_bounds_days=(2.0, 45.0)`
+   - Output run_id: `{config_run_id}_3dmatern_w45` — distinct from the base run_id so
+     deprecated 2D-RBF results are not overwritten.
+   - Fixed an existing NameError (`run_id` → `config['run_id']`) and a decimal/percent
+     scaling bug in the summary block (`<= 5.0` → `<= 0.05`, display multiplied by 100).
+
+2. **Wrote `DEPRECATED.txt`** in `AEResults/aelogs/california_20150101_20151231_res0_5x0_5_t30_0_d0_100/`
+   documenting that the 2D-RBF results are superseded as of 2026-03-30 and pointing to
+   the new canonical folder.
+
+3. **Ran `05_ae_update_tomatern0.5.py`** — all 23 windows completed successfully.
+
+4. **Updated `ae_file_structure.txt`**: marked `03_ae_inspect_data.py` as DEPRECATED,
+   added entries for `05_ae_rmsre_optimization.py` and `05_ae_update_tomatern0.5.py`,
+   updated the aelogs folder list.
+
+**Verification result:**
+
+| Metric       | Value                |
+|---|---|
+| Windows      | 23                   |
+| Pass (<5%)   | 19/23 (83%)          |
+| Median RMSRE | 3.86%                |
+| Max RMSRE    | 6.50% (July eddies)  |
+| Min RMSRE    | 2.00%                |
+| Std Z range  | 0.73 – 1.11          |
+
+Matches C2 result from optimization table exactly. July eddy Cluster 2 (6.50%) remains
+physically irreducible; accepted as the Skin Layer floor.
+
+**Completed todo items retired here:**
+
+- **Adopt C2 config (window=45) as the new standard for Skin Layer**
+
+---
+
+## 2026-03-30 — Session 9 (merge gaussian-kriging-rework → main)
+
+**What was done:**
+
+1. **Committed outstanding `AE_claude_todo.md` change** on `gaussian-kriging-rework` before switching branches.
+2. **Merged `gaussian-kriging-rework` into `main`** via fast-forward (no conflicts).
+3. **Deleted `gaussian-kriging-rework` branch** (`git branch -D`) — branch was local-only, never pushed.
+4. **Retired merge task from `AE_claude_todo.md`** and updated last-updated date to 2026-03-30.
+
+**Net result:** All work from Sessions 6–8 (3D Matern kernel, RMSRE optimization, float coverage plot) is now on `main`.
+
+---
+
 ## 2026-03-27 — Session 8 (RMSRE optimization — window experiment, float coverage plot)
 
 **What was done:**

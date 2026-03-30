@@ -10,9 +10,10 @@ ArgoEBUSAnalysis/
 │   │                                      #   ERDDAP REST API instead of zarr. Better for
 │   │                                      #   targeted annual runs.
 │   │
-│   ├── 03_ae_inspect_data.py             # Step 2: Downloads processed OHC parquet from
-│   │                                      #   S3 and generates diagnostic PNG plots.
-│   │                                      #   Uses 2D RBF kernel (production baseline).
+│   ├── 03_ae_inspect_data.py             # DEPRECATED (2026-03-30). Historical 2D RBF
+│   │                                      #   baseline (window=30d). Superseded by
+│   │                                      #   05_ae_update_tomatern0.5.py. Retained for
+│   │                                      #   comparison only.
 │   │
 │   ├── 03b_ae_plot_physics.py            # Regenerates physics PNGs from the 03 audit
 │   │                                      #   CSV without re-running kriging.
@@ -28,6 +29,19 @@ ArgoEBUSAnalysis/
 │   ├── 04b_ae_plot_matern_physics.py     # Regenerates physics PNGs from both 04
 │   │                                      #   audit CSVs without re-running kriging.
 │   │                                      #   Also saves a combined RMSRE comparison PNG.
+│   │
+│   ├── 05_ae_rmsre_optimization.py       # RMSRE optimization experiment. Ran 4 variants
+│   │                                      #   (C1–C4) against the C0 baseline to find the
+│   │                                      #   best config for the Skin Layer. Winner: C2
+│   │                                      #   (window=45d, 3D Matern). Results in aelogs/
+│   │                                      #   under _3d_m05_w* and _minbins80 folders.
+│   │
+│   ├── 05_ae_update_tomatern0.5.py       # CANONICAL Skin Layer script (supersedes 03).
+│   │                                      #   Adopts C2 config: mode='3D',
+│   │                                      #   kernel_type='matern0.5', window_size_days=45,
+│   │                                      #   time_ls_bounds_days=(2.0, 45.0).
+│   │                                      #   Output: aelogs/{run_id}_3dmatern_w45/
+│   │                                      #   Result: 19/23 pass (83%), median RMSRE 3.86%
 │   │
 │   ├── test_pipeline.py                   # Integration tests for the cloud pipeline.
 │   │
@@ -87,9 +101,12 @@ ArgoEBUSAnalysis/
 │   │   └── snapshot_{run_id}/            # Kriging snapshot PNGs, one per window center.
 │   ├── aeresults/                         # Output parquet/CSV results files.
 │   └── aelogs/                            # Per-run audit CSVs, CV pickles, and physics history PNGs.
-│       ├── {run_id}/                      # Script 03 output (2D RBF, production).
+│       ├── {run_id}/                      # Script 03 output (2D RBF, DEPRECATED 2026-03-30).
+│       │                                  #   Contains DEPRECATED.txt explaining supersession.
 │       ├── {run_id}_2d_rbf/              # Script 04 Run A: 2D RBF baseline for comparison.
-│       └── {run_id}_3d_matern05/         # Script 04 Run B: 3D Matern(nu=0.5) results.
+│       ├── {run_id}_3d_matern05/         # Script 04 Run B: 3D Matern(nu=0.5) results.
+│       ├── {run_id}_3d_m05_*/            # Script 05 optimization variants (C1–C4).
+│       └── {run_id}_3dmatern_w45/        # Script 05b canonical output (C2 config, 83% pass).
 │
 ├── CCS_OHC_Deep_GSW.csv                   # Processed OHC result: deep layer (500-1000m)
 │                                          #   for California Current System.
