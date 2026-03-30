@@ -28,7 +28,7 @@ Human Notes:
     Widening the window does not resolve the underconfidence.
   - Defer to Source Layer run — if Std Z is still < 0.85 there, investigate the
     auto-calibration noise adjustment bounds as the likely cause.
-
+- [  ] **Merge kriging rework branch back to main**
 ---
 
 ## Priority 2: Cloud Runs (Require AWS)
