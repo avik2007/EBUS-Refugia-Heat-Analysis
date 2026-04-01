@@ -1,62 +1,36 @@
 # Claude TODO — ArgoEBUSAnalysis
 
-Last updated: 2026-03-30
-
-**[Gemini Diagnosis]:** The time persistence oscillation in the Skin Layer is likely a **sampling aliasing effect**. The 10-day Argo float cycle and 15-day window step create a 30-day (2-window) repetition in the sampling time distribution relative to the window center. In the low-coherence Skin Layer, windows with larger gaps between float surfacings and the center lose temporal information, causing the GP to "pin" to the upper bound.
-
-Human Notes:
- - **[For Gemini]** The 3D Matern(nu=0.5) GP is showing a striking alternating pattern
-   in its time length scale (scale_time_days): every other rolling window pins hard to
-   the upper bound (45d or 30d depending on the bound set), while the intervening windows
-   find a free value. This is not a bounds issue — tightening from tb=45 to tb=30 just
-   moves the ceiling without fixing the alternation. The windows themselves are overlapping
-   15-day steps through 2015 CCS data. Is there a physical or statistical explanation for
-   why alternate windows would have fundamentally different temporal correlation structure?
-   Could this reflect a real oceanographic signal (e.g., spring/neap tidal aliasing, eddy
-   phase alternation), or is it a symptom of the 3D GP mode being ill-suited to the Skin
-   Layer where atmospheric forcing dominates and temporal coherence is low?
-
- - I want to work out the moving window, in such a way that I can study
-   time correlations and spatial correlations. This will hopefully allow
-   me to bring down the RMSRE.
- - Both RBF and Matern(nu=0.5) should be usable as a parameter (kernel_type='rbf'
-   or kernel_type='matern0.5'). The goal is modular comparison: same call, different
-   kernel, compare results_df directly. Do NOT implement Matern(nu=1.5).
- - To that end, analyze_rolling_correlations has been extended with mode='3D' and
-   kernel_type parameters. See AE_plan_3d_gpr_matern.md for the full design.
+Last updated: 2026-04-01
 
 ---
 
-## Priority 1: RMSRE Optimization
+## Priority 1: Switch to `californiav2` Domain (Consolidated FX2 Strategy)
 
+- [ ] **Re-run Cloud Ingestion (Script 02) with FX2 High-Res Temporal Resolution**
+  - **Action:** Re-run Script 02 for all three layers (Skin, Source, Background) using:
+    - `region='californiav2'` (lat [30, 45], lon [-130, -115])
+    - **`time_step=10.0`** (Aligns data bins with Argo 10-day heartbeat to resolve aliasing)
+  - New run_id prefix: `californiav2_20150101_20151231_res0_5x0_5_t10_0_d{range}`
 
-- [ ] **Time persistence oscillation — pending Gemini input (see Human Notes)**
-  - C5 (w45, tb=30) confirmed the alternation is structural, not a bounds artifact.
-    Tightening tb=45 → tb=30 moved the ceiling but the every-other-window pin persists.
-  - C2 (w45, tb=45, 83% pass) accepted as canonical pending Gemini's diagnosis.
-  - Do not pursue further bounds adjustments without a physical hypothesis.
+- [ ] **Execute GPR Analysis (Script 05/07)**
+  - **Action:** Once `t10_0` parquets are in S3, run:
+    - `conda run -n ebus-cloud-env python 05_ae_update_tomatern0.5.py` (Skin)
+    - `conda run -n ebus-cloud-env python 07_ae_deeper_layers.py` (Source + Background)
+  - No parameter overrides needed — all canonical guardrails are baked into defaults.
+  - Targets: Confirm Undercurrent meridional signature in Source layer; assess May 2015 Blob onset at depth.
 
 ---
 
-## Priority 2: Cloud Runs (Require AWS)
+## Priority 2: Experiments — Temporal Aliasing & Spatial Bounds (Resolved)
 
-- [ ] **Source Layer cloud run** — Script 02 with `depth_range=(150, 400)`
-  - This is the Ekman upwelling source water layer
-  - Expect: Anisotropy Ratio to increase (ratio > Skin Layer) — deeper = less wind shredding
-  - Then run Script 03 on the result
+- [x] **[For Gemini] Temporal persistence architecture decision**
+  - **Gemini Verdict:** Adopt **FX2 (`time_step=10.0`)**. Structural aliasing at 30d bins is unacceptable for heat-transport fingerprinting. High-res temporal bins will allow us to see the true physical coherence of the Undercurrent.
+- [x] **[For Gemini] Anisotropy vertical profile — flag for science review**
+  - **Gemini Verdict:** Meridional dominance in Skin (Aug-Sep) is physically consistent with the southward CC jet. The vertical fingerprint is confirmed: meridionality persists at depth (Source layer) while zonal dominance only emerges below 500m (Background).
 
-- [ ] **Background Layer cloud run** — Script 02 with `depth_range=(500, 1000)`
-  - This is the deep ocean control/baseline
-  - Needed to establish the "background" warming rate for comparison
-
-- [ ] **Investigate 3D Matern Std Z underconfidence (min 0.74)**
-  - Days 6090–6105 (late Sep / early Oct 2015): RMSRE is actually great (3.0%) but
-    Std Z = 0.74, meaning the model's error bars are too large relative to actual errors.
-  - Confirmed persistent: C2 (window=45) shows the same 0.74 at the same windows.
-  - RMSRE is small in all affected windows — this is a conservative/safe failure mode,
-    not a false-positive risk. Defer until after Source Layer analysis.
-  - If Std Z is still < 0.85 in the Source Layer, investigate auto-calibration noise
-    adjustment bounds as the likely cause.
+- [ ] **Background Layer window 5955–6000 (May 2015) — Case Study**
+  - Gemini confirms this is a **genuine non-stationarity event** (Pacific Blob onset).
+  - Task: Compare Z-score in the new `t10_0` high-res run; if Z > 2.0 persists, mark as physical violation of stationarity.
 
 ---
 
@@ -72,4 +46,18 @@ Human Notes:
   - From the Skin Layer audit, compare Jan vs. Aug Anisotropy Ratios
   - Already partially done: confirmed ratio ~0.36 Jan, ~0.49 Aug from 2015 logs
   - Formalize this into a plot showing ratio vs. month for a full year
+
+- [ ] **SST Cross-Validation: Argo Surface vs. Satellite SST**
+  - Collocate Argo Skin Layer (0–100m) binned temperature against OISST or MUR SST
+    for the California region, 2015.
+  - **OISST** (NOAA OI, 0.25°/daily, 1981–present): available via ERDDAP at
+    `https://coastwatch.pfeg.noaa.gov/erddap/`. Coarser but long record — good match
+    to the 0.5° Argo grid.
+  - **MUR** (NASA, 0.01°/daily, 2002–present): available via NASA PODAAC ERDDAP.
+    Finer resolution but more processing overhead.
+  - Compute: bias, RMSE, and Pearson r between collocated pairs, by month.
+  - Purpose: builds confidence that the Argo binning + OHC pipeline is capturing
+    the correct SST signal before the deeper-layer stealth warming comparison is trusted.
+  - Recommended start: OISST (resolution matches Argo grid; same ERDDAP infrastructure
+    already used for float trajectories).
 

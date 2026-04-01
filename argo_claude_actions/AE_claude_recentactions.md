@@ -2,6 +2,288 @@
 
 ---
 
+## 2026-04-01 — Code Updates: New Canonical Config (californiav2 + FX2 guardrails)
+
+**Prompted by Gemini FX2 verdict and californiav2 migration decision.**
+
+### Changes Made
+
+1. **`05_ae_update_tomatern0.5.py`** — updated `run_diagnostic_inspection()` defaults:
+   - `time_ls_bounds_days`: `(2.0, 45.0)` → `(15.0, 45.0)` (T3 permanent)
+   - `spatial_ls_upper_bound`: `5` → `10` (S1 permanent, all layers)
+   - `step_size_days`: `15` → `10` (matches 10d bin width; no aliasing)
+   - `__main__` block: now runs canonical `region='californiav2'` with no experiment suffix
+
+2. **`07_ae_deeper_layers.py`** — updated for canonical config:
+   - `COMMON` dict: `region='california'` → `region='californiav2'`
+   - Background layer call: removed S1 experiment overrides (`spatial_ls_upper_bound=10`,
+     `run_suffix="_s1ub10"`) — these are now the defaults
+
+### Pending (requires AWS cloud run)
+Script 02 re-run for all three layers: `region='californiav2'`, `time_step=10.0`.
+New parquets: `californiav2_20150101_20151231_res0_5x0_5_t10_0_d{0_100, 150_400, 500_1000}.parquet`
+GPR analysis ready to execute immediately once parquets are available.
+
+---
+
+## 2026-04-01 — Experiment T2: Step = 30d (Oscillation Verdict)
+
+**Change:** `step_size_days=30` in `run_diagnostic_inspection()`. Output: `_3dmatern_w45_t2s30`.
+
+**Result:**
+
+| Experiment | Windows | `scale_time` std | `scale_time` min | n < 15d |
+|---|---|---|---|---|
+| Baseline (step=15d) | 23 | 14.99 | 2.1d | 3/23 |
+| T3 (lb=15d, step=15d) | 23 | 11.82 | 16.3d | 0/23 |
+| T1 (step=10d) | 34 | 14.87 | 3.7d | 7/34 |
+| **T2 (step=30d)** | **12** | **0.00** | **45.0d** | **0/12** |
+
+**Verdict: the oscillation was entirely a data-structure artifact.**
+
+With step=30d, every window sees a genuinely new 30-day bin. The result: `scale_time` = 45.0d in
+**all 12 windows, zero variance**. The GP consistently finds maximum temporal persistence — it
+always saturates at the upper bound when given clean (non-duplicated) data.
+
+Two conclusions:
+
+1. **The oscillation was 100% caused by windows sharing the same data bins.** The apparent
+   alternation between short and long time scales was the GP responding erratically to
+   windows that had identical data in some runs and slightly different data in others due
+   to the 15-day step straddling different edges of 30-day bins.
+
+2. **The true Skin Layer temporal persistence saturates at or above 45 days.** The GP always
+   wants to use the full window width as the time scale — the ocean memory genuinely exceeds
+   the window. This is physically plausible (SST anomalies in the CCS can persist for months;
+   the 2015 Blob lasted >1 year).
+
+**What this means for the study design:**
+
+The 3D GP time dimension is providing limited diagnostic information at this binning level:
+the scale always saturates at the upper bound. Options (for Gemini):
+- **FX1:** Re-run Script 02 with `time_step=15d` — finer bins, 3 bins/window, may resolve
+  sub-window temporal structure that the 30d bins are averaging out
+- **FX2:** `time_step=10d` — even finer resolution
+- **Accept:** Use T2 (step=30d) as the canonical config, note that Skin Layer temporal
+  memory > 45 days is a positive physical finding for the stealth warming study
+
+RMSRE (10/12 pass, 3.90% median) and Std Z (0.73–1.07) are comparable to baseline.
+The Std Z upper bound dropped from 1.11 → 1.07 with the cleaner data.
+
+---
+
+## 2026-04-01 — Experiments T3 + S1: Temporal Aliasing & Spatial Bound Saturation
+
+**Prompted by Gemini analysis `2026-04-01_2015_CCS_MultiLayer_Analysis.md`.**
+**Plan recorded in `AE_plan_temporal_spatial_experiments.md`.**
+
+### Changes Implemented
+
+1. **`argoebus_gp_physics.py`** — added `spatial_ls_upper_bound=5` parameter to
+   `analyze_rolling_correlations()`. Changed `spatial_l_bounds = (1e-2, 5)` to
+   `spatial_l_bounds = (1e-2, spatial_ls_upper_bound)`. Also expanded the comment on
+   `time_ls_bounds_days` to document the aliasing root cause.
+
+2. **`05_ae_update_tomatern0.5.py`** — added `run_suffix=""`, `spatial_ls_upper_bound=5`,
+   `time_ls_bounds_days=(2.0, 45.0)` parameters to `run_diagnostic_inspection()`. Updated
+   `output_run_id` construction to append `run_suffix`. Updated `__main__` to run Experiment T3.
+
+3. **`07_ae_deeper_layers.py`** — Background layer call now passes `spatial_ls_upper_bound=10`
+   and `run_suffix="_s1ub10"` (S1 experiment).
+
+### Experiment T3 Results — Skin Layer, temporal lower bound 15d
+*(Output: `_3dmatern_w45_t3lb15`)*
+
+| Metric | Baseline | T3 |
+|---|---|---|
+| Pass (<5%) | 19/23 (83%) | 19/23 (83%) |
+| Median RMSRE | 3.86% | 3.86% |
+| Std Z range | 0.73–1.11 | 0.73–1.11 |
+| `scale_time` min | 2.1d | **16.3d** |
+| `scale_time` std | 14.99 | **11.82** |
+
+**Verdict: partial success.** The <10d collapses are gone (min now 16.3d vs. 2.1d baseline).
+RMSRE and Z unchanged — no accuracy cost. But the oscillation pattern persists in attenuated
+form: scale_time still alternates between ~16–30d and 45d windows. Std reduced 14.99 → 11.82
+(21% improvement). T3 is a useful floor but T1 (step=10d, align to Argo cycle) is still
+needed to fully eliminate the beat frequency.
+
+**New finding:** Spatial ConvergenceWarnings persist on lon_bin (dim 1, bound 5.0) in the
+Skin Layer — the *spatial* bounds are also saturating on some windows even at 0–100m.
+This suggests S1 may also be needed for the Skin Layer, not just Background.
+
+### Experiment S1 Results — Background Layer, spatial upper bound 10
+*(Output: `_3dmatern_w45_s1ub10`)*
+
+| Metric | Baseline | S1 |
+|---|---|---|
+| Pass (<5%) | 21/23 (91%) | 21/23 (91%) |
+| Median RMSRE | 2.06% | 2.06% |
+| Std Z range | 0.54–2.02 | 0.54–2.02 |
+| lat saturation (>23°) | 7/23 | 7/23 |
+| lon saturation (>23°) | 19/23 | 19/23 |
+| Anisotropy std | 0.207 | 0.204 |
+
+**Verdict: almost no effect on most windows.** The spatial scales in the Background layer
+were already exceeding 23.5° in the baseline — the assumption that `5 scaled units ≈ 23.5°`
+was incorrect. Because the StandardScaler `scale_` varies per window based on the actual
+data spread, `5 × scaler.scale_` can be much larger than 23.5° when the domain is wide.
+
+Three late-season windows (6082, 6097, 6112; Sep–Oct) did show lon scale expansion:
+35→47°, 36→50°, 35→52° — confirming the mechanism works. But the majority of windows
+were not constrained.
+
+**May 2015 failure window (5977, Z=2.02) completely unchanged by S1.** Confirms the
+overconfidence is a true physical non-stationarity event (candidate: 2015 Pacific Blob onset),
+not a bounds artifact. Flagged for Gemini.
+
+### What To Do Next
+
+1. **T1**: Run `step_size_days=10` on Skin Layer to fully eliminate the aliasing beat.
+   T3 reduced the amplitude; T1 addresses the root cause.
+2. **Flag for Gemini**: S1 showed Background spatial scales already varied widely (4–52°).
+   The physical picture is more complex than simple saturation. Gemini should interpret the
+   Sep–Oct lon scale expansion (35 → 52°) in the context of autumn deep water mass spreading.
+3. **May 2015 Background failure**: confirmed physical. Gemini to assess Blob onset timing.
+
+---
+
+## 2026-04-01 — Experiment T1: Step = 10d (Root Cause Revision)
+
+**Change:** Added `step_size_days` parameter to `run_diagnostic_inspection()` in
+`05_ae_update_tomatern0.5.py`. Output: `_3dmatern_w45_t1s10`.
+
+**Result:**
+
+| Metric | Baseline (step=15d) | T3 (lb=15d) | T1 (step=10d) |
+|---|---|---|---|
+| Windows | 23 | 23 | **34** |
+| Pass (<5%) | 19/23 (83%) | 19/23 (83%) | 28/34 (82%) |
+| Median RMSRE | 3.86% | 3.86% | 3.89% |
+| `scale_time` std | 14.99 | 11.82 | **14.87** |
+| `scale_time` min | 2.1d | 16.3d | **3.7d** |
+
+T1 produced **no meaningful improvement** over the baseline. Std 14.87 ≈ baseline 14.99.
+
+**Root cause revision:** The aliasing is NOT driven by the Argo 10-day resurface cycle.
+It is driven by the **30-day time bin width** in the pre-processed parquet (Script 02
+`time_step=30.0`). With a 10-day step, 11/33 consecutive window pairs contain
+**identical data** (same RMSRE and n_bins to machine precision) because the step is
+shorter than the bin width — both windows span the exact same 30-day bins. The apparent
+~30-day oscillation period IS the bin width, not the Argo cycle.
+
+**Implication:** No step-size change will fix this unless `step_size_days ≥ time_step`.
+The structural fixes are:
+- **FX3 (T2, no cloud run):** `step_size_days=30` — advances exactly one bin per window
+- **FX1/FX2 (requires cloud run):** re-run Script 02 with `time_step=15` or `time_step=10`
+
+T2 (step=30d) is queued as the immediate no-cost diagnostic.
+
+---
+
+## 2026-03-31 — GPR Analysis: Source Layer (150-400m) + Background Layer (500-1000m)
+
+**Both runs completed successfully via `07_ae_deeper_layers.py` (parallel background jobs).**
+
+### Three-Layer Results Summary
+
+| Metric | Skin (0-100m) | Source (150-400m) | Background (500-1000m) |
+|---|---|---|---|
+| Windows | 23 | 23 | 23 |
+| Pass (<5%) | 19/23 (83%) | 18/23 (78%) | **21/23 (91%)** |
+| Median RMSRE | 3.86% | 3.66% | **2.06%** |
+| Max RMSRE | 6.50% | 8.59% | 6.02% |
+| Min RMSRE | 2.00% | 2.56% | **1.61%** |
+| Std Z range | 0.73–1.11 | 0.53–1.46 | 0.54–2.02 |
+
+### Key Scientific Observations
+
+**Anisotropy Ratio vertical profile (stealth warming fingerprint):**
+- Skin Layer: 0.36–0.49 — strongly zonal throughout, dominated by atmospheric forcing
+- Source Layer: rises to **1.07–1.15 in Aug–Sep** (windows 6075–6165) — meridional current
+  dominance emerging at 150–400m. This is the first quantitative evidence of California
+  Undercurrent influence at depth. Not present in Skin or Background.
+- Background Layer: 0.17–0.94 — remains zonal throughout; no meridional dominance at 500–1000m.
+
+**RMSRE trend with depth:** Background has lowest RMSRE (2.06% median) because deep water is
+spatially coherent. Source Layer intermediate. Skin Layer most variable due to atmospheric forcing.
+
+**Std Z widening at depth:** Both deeper layers show wider Z ranges than Skin (0.53–2.02 vs.
+0.73–1.11). Root cause: spatial length scale bounds too tight. The optimizer hits the lat upper
+bound (5.0°) and lon upper bound (2.0°) in many windows, meaning actual correlation structures
+at depth are larger than the configured bounds allow.
+
+**Notable failure — Background Layer window 5955–6000 (mid-May 2015):**
+RMSRE=5.72%, Z=2.02 (strongly overconfident), Anisotropy=0.28. The only severe Z failure across
+all three layers. Possibly related to the 2015 Pacific Blob onset. Flagged for Gemini.
+
+### Output Artifacts
+
+| Layer | run_id suffix | Audit CSV |
+|---|---|---|
+| Source | `_d150_400_3dmatern_w45` | `AEResults/aelogs/california_..._d150_400_3dmatern_w45/` |
+| Background | `_d500_1000_3dmatern_w45` | `AEResults/aelogs/california_..._d500_1000_3dmatern_w45/` |
+
+Each folder: `audit_*.csv`, `cv_details_*.pkl`, 5 physics PNGs. Kriging snapshots in `aeplots/`.
+
+### Completed todo items retired here
+- **Source Layer GPR analysis** (`depth_range=(150, 400)`)
+- **Background Layer GPR analysis** (`depth_range=(500, 1000)`)
+- **Investigate 3D Matern Std Z underconfidence (min 0.74)** — root cause now identified as
+  spatial length scale bounds saturation, not a noise calibration issue. Affects all layers.
+  New todo item added for bound widening.
+
+---
+
+## 2026-03-31 — Cloud Runs: Source Layer + Background Layer (Script 02)
+
+**Both runs completed successfully.**
+
+| Layer | depth_range | S3 Parquet |
+|---|---|---|
+| Source | (150, 400) | `california_20150101_20151231_res0_5x0_5_t30_0_d150_400.parquet` |
+| Background | (500, 1000) | `california_20150101_20151231_res0_5x0_5_t30_0_d500_1000.parquet` |
+
+Runs executed in parallel via background Bash jobs. Both used `region=california`, `lat_step=0.5`, `lon_step=0.5`, `time_step=30.0`, `n_workers=3` on Coiled AWS (us-east-1). Next step: run GPR analysis (`05_ae_update_tomatern0.5.py`) on each layer using C2 config.
+
+---
+
+## 2026-03-31 — Shelved: Time Persistence Oscillation (Priority 1 → archived)
+
+**Status: Shelved pending Gemini physical hypothesis. No further implementation without one.**
+
+**Gemini diagnosis (recorded):** The alternating time length scale in the Skin Layer 3D Matern GP is likely a **sampling aliasing effect**. The 10-day Argo float cycle and 15-day window step create a 30-day (2-window) repetition in sampling time distribution relative to the window center. In the low-coherence Skin Layer, windows with larger gaps between float surfacings and the center lose temporal information, causing the GP to pin to the upper bound.
+
+**Implementation record:**
+- C5 (w45, tb=30): alternation confirmed structural, not a bounds artifact. Tightening tb=45 → tb=30 moved the ceiling without fixing the alternation.
+- C2 (w45, tb=45, 83% pass) accepted as canonical Skin Layer configuration.
+- Do not pursue further bounds adjustments without a physical hypothesis from Gemini.
+- The oscillation may reflect a real oceanographic signal (spring/neap tidal aliasing, eddy phase alternation) or may indicate the 3D GP mode is ill-suited to the Skin Layer where atmospheric forcing dominates and temporal coherence is low.
+
+---
+
+## 2026-03-31 — Session 11 (Improved kriged OHC plot labels + August 2015 snapshot)
+
+**What was done:**
+
+1. **Modified `plot_kriging_snapshot()` in `argoebus_gp_physics.py`** — label improvements:
+   - Added `units_label` parameter (auto-detected: `"ohc"` in col name → `"J/m²"`, else `"°C"`)
+   - Added `time_epoch` parameter (default `date(1999, 1, 1)`)
+   - Predicted map colorbar: `target_col` raw string → `"OHC per m (J/m²)"`
+   - Predicted map title: opaque `"Predicted Map (Window Center (months since 1999-01-01): N)"` → `"Predicted Map: August 2015"` (center_val converted via timedelta to real calendar month)
+   - Uncertainty colorbar: `"Uncertainty (1σ)"` → `"1σ Uncertainty (J/m²)"` — same units as predicted field
+   - Uncertainty title: `"Uncertainty Map"` → `"Uncertainty: August 2015"`
+
+2. **Created `ArgoEBUSCloud/06_ae_plot_august2015.py`** — standalone script:
+   - Loads the existing 2D-RBF audit CSV (no re-run of GPR)
+   - Loads the Skin Layer parquet from S3
+   - Targets mid-August 2015 (day 6070 since 1999-01-01); nearest window: day 6075
+   - Saves to `AEResults/aeplots/august2015_ohc_kriged_{run_id}.png`
+
+**Verification result:** Script ran cleanly. 151 obs in window, GP fitted and predicted on 0.25° grid. Plot saved successfully.
+
+---
+
 ## 2026-03-30 — Session 10 (Canonical Skin Layer script: 3D Matern C2 config)
 
 **What was done:**

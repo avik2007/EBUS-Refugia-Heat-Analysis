@@ -995,13 +995,23 @@ def analyze_rolling_correlations(df,
                                  #              Both options produce identical output columns,
                                  #              so you can call this function twice with different
                                  #              kernel_type values and compare results_df directly.
+                                 spatial_ls_upper_bound=5,
+                                 # Upper bound (in StandardScaler-normalized units) on the spatial
+                                 # length scales that the optimizer is allowed to find.
+                                 # Default 5 matches the historical setting for the Skin Layer.
+                                 # For deeper layers (e.g. Background 500–1000m) where spatial
+                                 # coherence is physically larger, pass a higher value (e.g. 10)
+                                 # to prevent the optimizer saturating at the bound wall, which
+                                 # causes artificially compressed anisotropy ratios.
                                  time_ls_bounds_days=(2.0, 30.0),
                                  # Physical lower/upper bound (in days) on the time length scale
                                  # that the optimizer is allowed to find. Only used in mode='3D'.
                                  # Lower bound (~2 days): prevents the model treating all obs as
                                  # temporally uncorrelated (faster than ocean adjustment timescales).
-                                 # Upper bound (~30 days): prevents the model ignoring time entirely
-                                 # and degenerating to a 2D spatial climatology.
+                                 # Raising this to ~15 days suppresses aliasing artifacts caused by
+                                 # the 10-day Argo resurface cycle beating against the window step.
+                                 # Upper bound (~30-45 days): prevents the model ignoring time
+                                 # entirely and degenerating to a 2D spatial climatology.
                                  ):
     """
     Performs a "Rolling Window" Gaussian Process analysis to assess how ocean physics 
@@ -1136,8 +1146,11 @@ def analyze_rolling_correlations(df,
         
         # --- 3. CONFIGURE KERNEL ---
         # Bounds are in SCALED (dimensionless) units throughout.
+        # spatial_ls_upper_bound is passed in from the caller; default 5 is the
+        # historical Skin Layer setting. Callers for deeper layers should increase
+        # this to allow the optimizer to find larger true correlation scales.
         if auto_tune:
-            spatial_l_bounds = (1e-2, 5)
+            spatial_l_bounds = (1e-2, spatial_ls_upper_bound)
             n_bounds = (1e-5, 1e1)
             optimizer_restarts = tune_iterations
         else:
@@ -1320,16 +1333,24 @@ PIPELINE: TAKES OUTPUT FROM ArgoGPR.analyze_rolling_correlations()
     grid_res : float
         Resolution of the output map in degrees (e.g., 0.5 deg).
     """
-def plot_kriging_snapshot(df_raw, 
-                          results_df, 
-                          target_date, 
+def plot_kriging_snapshot(df_raw,
+                          results_df,
+                          target_date,
                           # --- CONFIG ---
                           feature_cols=['lat_bin', 'lon_bin'], # Must match what you ran analysis with
-                          target_col='ohc_per_m', 
+                          target_col='ohc_per_m',
                           time_col='time_bin',        # The column name in df_raw
                           window_size_days=90,
-                          grid_res=0.5, 
-                          cmap='magma_r'):
+                          grid_res=0.5,
+                          cmap='magma_r',
+                          # --- LABEL CONFIG ---
+                          # units_label: SI unit string shown on colorbars.
+                          # If None, auto-detected: ohc_per_m -> J/m², temperature -> °C.
+                          # time_epoch: the reference date (datetime.date) that window_center
+                          # is measured from. Used to convert numeric center to a readable
+                          # "Month YYYY" string for the plot title.
+                          units_label=None,
+                          time_epoch=None):
     
     # ---------------------------------------------------------
     # 1. PARAMETER LOOKUP (The Bridge)
@@ -1434,19 +1455,44 @@ def plot_kriging_snapshot(df_raw,
     # ---------------------------------------------------------
     # 6. PLOT WITH CARTOPY
     # ---------------------------------------------------------
+
+    # --- LABEL SETUP ---
+    # Auto-detect SI units from target column name if not explicitly provided.
+    # ohc_per_m is stored in Joules per square meter (J/m²); temperature in °C.
+    if units_label is None:
+        units_label = "J/m²" if "ohc" in target_col else "°C"
+
+    # Convert the numeric window center (days since epoch) to a human-readable
+    # "Month YYYY" string for the title. Falls back to the raw number if no
+    # epoch is provided, which matches legacy behavior.
+    if time_epoch is None:
+        # Default epoch used throughout this pipeline: 1999-01-01
+        from datetime import date as _date
+        time_epoch = _date(1999, 1, 1)
+
+    from datetime import date as _date, timedelta as _timedelta
+    # center_val is days since time_epoch — convert to a calendar date
+    center_date = time_epoch + _timedelta(days=float(center_val))
+    # Format as "August 2015" for a clean, unambiguous title
+    window_label = center_date.strftime("%B %Y")
+
     fig = plt.figure(figsize=(15, 6))
-    
+
     # --- PLOT A: MEAN ---
     ax1 = fig.add_subplot(1, 2, 1, projection=ccrs.PlateCarree())
     ax1.set_extent([lon_min, lon_max, lat_min, lat_max], crs=ccrs.PlateCarree())
     ax1.add_feature(cfeature.LAND, zorder=100, edgecolor='k', facecolor='lightgray')
     ax1.add_feature(cfeature.COASTLINE, zorder=101)
     ax1.gridlines(draw_labels=True, linestyle='--')
-    
+
     mesh1 = ax1.pcolormesh(LON, LAT, y_pred, transform=ccrs.PlateCarree(), cmap=cmap, shading='auto')
-    plt.colorbar(mesh1, ax=ax1, label=target_col)
+    # Colorbar label shows the physical quantity with SI units.
+    # "OHC per m" is the column name rendered in readable form; J/m² is the SI unit.
+    plt.colorbar(mesh1, ax=ax1, label=f"OHC per m ({units_label})")
     ax1.scatter(df_window[feature_cols[1]], df_window[feature_cols[0]], c='green', s=15, marker='x', alpha=0.5, label='Argo Profiles')
-    ax1.set_title(f"Predicted Map (Window Center (months since 1999-01-01): {center_val:.0f})")
+    # Short title avoids overlapping the colorbar label; window_label gives the
+    # actual calendar month rather than an opaque numeric offset.
+    ax1.set_title(f"Predicted Map: {window_label}")
 
     # --- PLOT B: UNCERTAINTY ---
     ax2 = fig.add_subplot(1, 2, 2, projection=ccrs.PlateCarree())
@@ -1454,12 +1500,14 @@ def plot_kriging_snapshot(df_raw,
     ax2.add_feature(cfeature.LAND, zorder=100, edgecolor='k', facecolor='lightgray')
     ax2.add_feature(cfeature.COASTLINE, zorder=101)
     ax2.gridlines(draw_labels=True, linestyle='--')
-    
+
     mesh2 = ax2.pcolormesh(LON, LAT, y_std, transform=ccrs.PlateCarree(), cmap='Reds', shading='auto', vmin=0)
-    plt.colorbar(mesh2, ax=ax2, label=f"Uncertainty (1$\sigma$)")
+    # Uncertainty is the GP posterior std dev in the same physical units as the
+    # predicted field (inverse-transformed from scaled space), so the unit label matches.
+    plt.colorbar(mesh2, ax=ax2, label=f"1$\sigma$ Uncertainty ({units_label})")
     ax2.scatter(df_window[feature_cols[1]], df_window[feature_cols[0]], c='green', s=15, marker='o', alpha=0.3)
-    ax2.set_title(f"Uncertainty Map")
-    
+    ax2.set_title(f"Uncertainty: {window_label}")
+
     #plt.show()
     return fig
 
