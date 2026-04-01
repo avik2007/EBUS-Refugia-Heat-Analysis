@@ -43,7 +43,7 @@ spec.loader.exec_module(mod)
 run_diagnostic_inspection = mod.run_diagnostic_inspection
 
 # Common config — must match the cloud run parameters used in Script 02
-COMMON = dict(region="californiav2", lat_step=0.5, lon_step=0.5, time_step=30.0)
+COMMON = dict(region="californiav2", lat_step=0.5, lon_step=0.5, time_step=10.0)  # FX2: matches 10d bin width from Script 02
 
 # Accept an optional command-line argument to run only one layer:
 #   python 07_ae_deeper_layers.py source      -> Source Layer only

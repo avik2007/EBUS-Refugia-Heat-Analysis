@@ -1,60 +1,55 @@
 # Gemini TODO — ArgoEBUSAnalysis
 
-Last updated: 2026-03-31
+Last updated: 2026-04-01
 
 ---
 
-## Priority 1: californiav2 Migration and Vertical Comparison
+## Priority 1: Empirical Domain Optimization (californiav3)
 
-- [ ] **Coordinate californiav2 Clean Slate Runs**
-  - Directive to Claude: Execute Script 02 for all layers using `region='californiav2'`, `time_step=10.0`, and `time_ls_bounds_days=(15.0, 45.0)`.
-  - Objective: Align data bins with the 10-day Argo cycle to resolve structural aliasing at the source.
-  - Audit GPR results with `step_size_days=10.0`.
+**Objective:** Use the Long-Term Float Census to define a high-density sub-region for the stealth warming analysis.
 
-- [ ] **Synthesize Vertical Delta Report (`04_ae_vertical_compare.py`)**
-  - Develop a comparison script to load audit CSVs from the `californiav2` runs for all three layers.
-  - Quantify: Is the **Source Layer (150–400m)** warming faster than the **Background (500–1000m)**?
-  - Verify: Does the Source Layer maintain a stable meridional anisotropy ratio (Undercurrent signature) compared to the Skin layer?
+- [ ] **[For Claude] Execute Long-Term Census (1999-2025)**
+  - Implement `09_ae_longterm_float_census.py` based on the design in `argo_gemini_actions/AE_plan_longterm_float_census.md`.
+  - Output: 26-year "Small Multiples" heatmap of unique floats per 5°x5° bin.
 
-- [ ] **Deep-Dive: May 2015 Blob Onset**
-  - Analyze the 500m window 5977.5 in the high-resolution run.
-  - Determine if higher temporal resolution allows the GP to capture the heat surge without overconfidence (Z > 2.0).
+- [ ] **[For Gemini] Interpret Census and Define californiav3**
+  - Review the census heatmap to identify the "Golden Age" (years with max density) and "Hotspots" (bins with >10 floats consistently).
+  - Select final Lat/Lon bounds for `californiav3`.
 
----
-
-## Priority 2: Multi-Layer Verification and Physics Review (Complete - 2015 baseline)
-
-- [x] **Analyze Background Layer Failure (May 2015)**
-  - Investigated window 5955–6000: Anisotropy=0.28, Z=2.02. Identified as a zonally elongated front event at depth.
-- [x] **Evaluate Source Layer Anisotropy (Aug–Sep 2015)**
-  - Confirmed meridional dominance (>1.0) in Skin/Source, switching to Zonal (<0.9) in Background.
-- [x] **Assess Spatial Length Scale Bounds**
-  - Confirmed saturation at 5.0 sigma. Recommended widening to 10.0 for depth > 500m.
-- [x] **Cross-Layer Persistence Comparison (The Sampling Beat)**
-  - Disproved hypothesis: oscillation persists in Source layer due to sampling aliasing (now known as structural binning aliasing).
+- [ ] **[For Claude] Implement californiav3 in ae_utils.py**
+  - Add the new region definition to the registry.
 
 ---
 
-## Priority 2: Branch Merging & Stability
+## Priority 2: Consolidated "Clean Slate" Runs (on californiav3)
 
-- [ ] **Extend `plot_kriging_snapshot` for 3D**
-  - Update the snapshot logic to handle the 3rd (time) dimension (likely by slicing at the window center) to allow visual inspection of 3D fits.
+**Objective:** Once the domain is optimized, run the full 3-layer analysis.
+
+- [ ] **Cloud Ingestion (Script 02)**
+  - `californiav3` all three layers: `time_step=10.0`, high-res temporal bins.
+
+- [ ] **GPR Analysis (Script 05/07)**
+  - Execute 3D Matern pipeline with canonical FX2/T3 settings:
+    - `step_size_days=10`
+    - `time_ls_bounds_days=(15.0, 45.0)`
+    - `spatial_ls_upper_bound=10`
+
+---
+
+## Priority 3: Vertical Heat Content Comparison
+
+- [ ] **Vertical Delta Analysis Script**
+  - Compare warming rates between Source (150-400m) and Background (500-1000m) layers.
+  - Test the hypothesis: Is the California Undercurrent corridor warming faster than the deep ocean?
+
+- [ ] **Anisotropy Fingerprinting**
+  - Document the meridional/zonal dominance shifts across the three layers to isolate the jet signature.
 
 ---
 
-## Priority 3: Cross-EBUS Expansion
+## Priority 4: Background & Maintenance (On Hold)
 
-- [ ] **Test 3D Pipeline on `humboldt` or `canary`**
-  - Validate that the 15-day temporal persistence and 30-day window size are globally applicable or require per-region tuning.
-
----
-
-## Priority 4: External Validation
-
-- [ ] **SST Comparison Design**
-  - Review the plan to use OISST or MUR SST to cross-validate the Argo Skin Layer (0–100m) results.
-  - Focus on ensuring the 0.5° binning logic is robust before trusting deep-layer deltas.
-
----
-**Human Note (2026-03-25):**
-I want to begin writing detailed, readable documentation, both for coders (implementation details, API, scaling) and scientists (physical significance, hypothesis testing, metric interpretation).
+- [ ] **May 2015 Background failure (Z=18.73)**
+  - Re-examine on the new `californiav3` domain once available.
+- [ ] **SST Cross-Validation (OISST)**
+  - Compare Argo Skin Layer results with satellite SST for ground-truthing.

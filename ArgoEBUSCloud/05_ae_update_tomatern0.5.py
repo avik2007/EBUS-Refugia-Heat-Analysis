@@ -18,9 +18,13 @@ completed T1–T3 temporal experiments and S1–S2 spatial-bound experiments:
   - time_ls_bounds_days=(15.0, 45.0) : T3 result — lower bound raised from 2d
                                         to 15d to prevent unphysical sub-ocean-
                                         timescale collapse in the GP optimizer
-  - step_size_days=10                : matches the 10d Argo resurface / bin
-                                        width, eliminating structural aliasing
-                                        (beat frequency oscillation in scale_time)
+  - time_step=10.0                   : FX2 fix — bin width in Script 02 set to
+                                        10d, matching the Argo resurface cycle.
+                                        Eliminates structural aliasing by making
+                                        bin width == step_size_days.
+  - step_size_days=10                : matches the 10d bin width, eliminating
+                                        structural aliasing (beat frequency
+                                        oscillation in scale_time)
   - spatial_ls_upper_bound=10        : S1 result — raised from 5 to allow the
                                         optimizer to reach deep-layer spatial
                                         coherence without bound saturation
@@ -48,7 +52,7 @@ from ebus_core.argoebus_gp_physics import (
 
 
 def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
-                              time_step=30.0, depth_range=(0, 100),
+                              time_step=10.0, depth_range=(0, 100),
                               run_suffix="",
                               spatial_ls_upper_bound=10,
                               time_ls_bounds_days=(15.0, 45.0),
@@ -210,6 +214,6 @@ if __name__ == "__main__":
         region="californiav2",
         lat_step=0.5,
         lon_step=0.5,
-        time_step=30.0,
+        time_step=10.0,   # FX2: matches the 10d bin width used in Script 02
         depth_range=(0, 100),
     )

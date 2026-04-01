@@ -2,6 +2,84 @@
 
 ---
 
+## 2026-04-01 — FX2 Cloud Run + GPR Analysis: californiav2 t10_0 All Layers
+
+**First GPR run on the FX2 canonical parquets (californiav2, time_step=10.0).**
+
+### Cloud Run (Script 02)
+
+Re-ran `02_ae_cloud_run.py` for all three layers on AWS/Coiled.
+Updated `__main__` to canonical FX2 config; removed dead-code V1 block.
+Also fixed `time_step` bug: both `05_ae_update_tomatern0.5.py` and
+`07_ae_deeper_layers.py` had `time_step=30.0` in their config, causing
+S3 path mismatches. Updated to `time_step=10.0` everywhere including the
+`run_diagnostic_inspection()` default function signature.
+
+S3 parquets written:
+- `s3://argo-ebus-project-data-abm/californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100.parquet`
+- `s3://argo-ebus-project-data-abm/californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400.parquet`
+- `s3://argo-ebus-project-data-abm/californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000.parquet`
+
+### GPR Results (Scripts 05 + 07)
+
+Output run_id suffix: `_3dmatern_w45` (no experiment suffix — canonical run).
+All output in `AEResults/aelogs/<run_id>/` and `AEResults/aeplots/snapshot_<run_id>/`.
+
+| Layer | Pass Rate | Median RMSRE | Max RMSRE | Std Z Range | Old Median RMSRE |
+|-------|-----------|--------------|-----------|-------------|-----------------|
+| Skin (0–100m) | 25/34 (74%) | 3.80% | 6.24% | 0.42–2.35 | ~3.4% (t30 baseline) |
+| Source (150–400m) | 8/34 (24%) | **8.13%** | **22.09%** | 0.20–15.63 | ~4.2% (t30 baseline) |
+| Background (500–1000m) | 34/34 (100%) | 1.99% | 3.42% | 0.22–18.73 | ~4.8% (t30 baseline) |
+
+### Issues Flagged for Gemini Review
+
+**1. Source Layer severe regression (Priority)**
+- Median RMSRE 8.13% vs old 4.2%. Only 8/34 windows pass. Max RMSRE 22.09%.
+- Extreme anisotropy ratios in many windows (8.41, 35.75, 6.26) — non-physical.
+- Worst windows (RMSRE > 10%): centers at days 5952, 6032, 6072, 6082, 6132,
+  6142, 6152, 6172, 6182, 6192.
+- Z spike: window 6022 has std_z=15.63 despite RMSRE=3.5% — extreme overconfidence.
+- Possible causes: tighter californiav2 domain clips float trajectories at depth;
+  10d bins expose sparsity in Source layer that 30d bins masked by averaging.
+
+**2. scale_time_bin saturates at 45d in all Skin and Source windows**
+- Every window hits the upper bound of `time_ls_bounds_days=(15.0, 45.0)`.
+- T2 experiment already showed this: the GP always wants to use maximum temporal
+  persistence. No oscillation (FX2 worked), but still saturated.
+- Question for Gemini: is 45d an insufficient upper bound for skin temporal
+  coherence? Should we widen `time_ls_bounds_days` upper limit for Skin layer?
+
+**3. Background Layer: isolated Z spike at window 6102.5 (Z=18.73)**
+- RMSRE only 2.67% but Z=18.73. Day 6102.5 from 1999-01-01 ≈ Sep 2015.
+- Background scale_time_bin is variable (26–45d in mid-year) — FX2 is working here.
+- Consistent with Pacific Blob peak non-stationarity. Gemini verdict from prior
+  session: genuine physical event, flag as stationarity violation if Z > 2.0 persists.
+
+### Output Files for Gemini
+
+**Skin Layer (0–100m):**
+- Audit CSV: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45/audit_californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45.csv`
+- Temporal persistence: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45/temporal_persistence_californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45.png`
+- Anisotropy: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45/anisotropy_californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45.png`
+- Z-score: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45/zscore_std_californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45.png`
+- Kriging snapshots: `AEResults/aeplots/snapshot_californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45/`
+
+**Source Layer (150–400m):**
+- Audit CSV: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45/audit_californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45.csv`
+- Temporal persistence: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45/temporal_persistence_californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45.png`
+- Anisotropy: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45/anisotropy_californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45.png`
+- Z-score: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45/zscore_std_californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45.png`
+- Kriging snapshots: `AEResults/aeplots/snapshot_californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45/`
+
+**Background Layer (500–1000m):**
+- Audit CSV: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45/audit_californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45.csv`
+- Temporal persistence: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45/temporal_persistence_californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45.png`
+- Anisotropy: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45/anisotropy_californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45.png`
+- Z-score: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45/zscore_std_californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45.png`
+- Kriging snapshots: `AEResults/aeplots/snapshot_californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45/`
+
+---
+
 ## 2026-04-01 — Code Updates: New Canonical Config (californiav2 + FX2 guardrails)
 
 **Prompted by Gemini FX2 verdict and californiav2 migration decision.**
