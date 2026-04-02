@@ -471,4 +471,39 @@ def plot_all_years_for_layer(census, layer_name, display_label, out_dir, ccs_bou
         year_df = census[census["year"] == year][["lat_bin", "lon_bin", "n_floats"]].copy()
         path = plot_year(year_df, year, layer_name, display_label, out_dir, ccs_bounds)
         print(f"[census/{layer_name}]   {year} → {os.path.basename(path)}")
+
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    # Setup: output directory + CCS domain bounds for plot overlays.
+    # ccs_bounds is read once here and passed to every plot call so that
+    # the overlay stays consistent across all figures.
+    out_dir    = build_output_dir()
+    ccs_bounds = get_ccs_bounds()
+
+    # Process each layer in order. "alldepths" goes first (matches script 09
+    # baseline), then the three scientific layers. This ordering means that if
+    # the run is interrupted, the all-depths and skin results are already saved
+    # before the deeper, slower source/background fetches.
+    for layer_name, (pres_min, pres_max, display_label) in LAYERS.items():
+        print(f"\n[census] === Layer: {layer_name} ({display_label}) ===")
+
+        # Fetch raw dive positions from ERDDAP for this layer
+        raw = fetch_layer_data(layer_name, pres_min, pres_max)
+
+        # Bin to 5°x5° unique-float census
+        census = build_census(raw)
+
+        # Archive census to CSV
+        save_census_csv(census, layer_name, out_dir)
+
+        # Per-year PNGs
+        plot_all_years_for_layer(census, layer_name, display_label, out_dir, ccs_bounds)
+
+        # Per-layer mean PNG (all years averaged)
+        plot_layer_mean(census, layer_name, display_label, out_dir, ccs_bounds)
+
+    print("\n[census] All layers complete. Done.")
     print(f"[census/{layer_name}] Per-year PNGs done.")
