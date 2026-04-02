@@ -239,3 +239,236 @@ def save_census_csv(census, layer_name, out_dir):
     census.to_csv(csv_path, index=False)
     print(f"[census/{layer_name}] CSV saved → {csv_path}")
     return csv_path
+
+
+# ---------------------------------------------------------------------------
+# PLOTTING HELPERS
+# ---------------------------------------------------------------------------
+
+def draw_ccs_bounds(ax, ccs_bounds):
+    # Draws the californiav2 domain boundary as a dashed red rectangle on a
+    # Cartopy axes. Labels it "CCS Analysis Bounds" in red near the top-left
+    # corner of the rectangle.
+    #
+    # Why this overlay matters: the californiav2 domain (lon [-130,-115],
+    # lat [30,45]) is tighter than the broad census domain (lon [-140,-110],
+    # lat [25,50]). Floats outside this rectangle are excluded from GPR runs.
+    # Overlaying this boundary makes visible exactly which census cells are
+    # inside vs. outside the GPR domain — the key diagnostic for the 2015
+    # source layer regression.
+    #
+    # Inputs:
+    #   ax         - Cartopy GeoAxes (must be in PlateCarree projection)
+    #   ccs_bounds - dict {"lat": [lat_min, lat_max], "lon": [lon_min, lon_max]}
+    #                from get_ccs_bounds()
+    lat_min, lat_max = ccs_bounds["lat"]
+    lon_min, lon_max = ccs_bounds["lon"]
+
+    # Draw the four sides of the rectangle as a closed polygon.
+    # ax.plot() with transform=PlateCarree keeps the line on the map.
+    box_lons = [lon_min, lon_max, lon_max, lon_min, lon_min]
+    box_lats = [lat_min, lat_min, lat_max, lat_max, lat_min]
+    ax.plot(
+        box_lons, box_lats,
+        color="red", linewidth=1.5, linestyle="--",
+        transform=ccrs.PlateCarree(),
+        zorder=200,   # Above land (zorder 100) and coastline (101)
+    )
+
+    # Label near the top-left interior corner, offset slightly inward so
+    # the text sits inside the box and is legible against the ocean color.
+    ax.text(
+        lon_min + 0.5, lat_max - 1.5,
+        "CCS Analysis Bounds",
+        color="red", fontsize=8, fontweight="bold",
+        transform=ccrs.PlateCarree(),
+        zorder=201,
+        bbox=dict(facecolor="white", alpha=0.5, edgecolor="none", pad=1),
+    )
+
+
+def plot_year(year_census, year, layer_name, display_label, out_dir, ccs_bounds):
+    # Produces a Cartopy pcolormesh heatmap for one year and one depth layer.
+    #
+    # The pivot step converts the tidy (lat_bin, lon_bin, n_floats) records
+    # into a 2D array on the regular 5-degree grid. Cells with no floats are
+    # filled with 0.0 so the full domain renders without blank tiles.
+    #
+    # pcolormesh expects bin EDGES, not centers. We derive edges from the
+    # sorted center values by adding/subtracting 2.5 degrees (half the bin width).
+    #
+    # Inputs:
+    #   year_census   - DataFrame for one year: columns [lat_bin, lon_bin, n_floats]
+    #   year          - Integer year for title and filename
+    #   layer_name    - Short key (e.g., "source") for filename
+    #   display_label - Human-readable label (e.g., "Source (150-400m)") for title
+    #   out_dir       - Absolute path to output subfolder
+    #   ccs_bounds    - Dict from get_ccs_bounds(), passed to draw_ccs_bounds()
+    #
+    # Saves: float_census_{layer_name}_{year}.png
+    # Returns: absolute path to the saved PNG
+    pivot = (
+        year_census
+        .pivot(index="lat_bin", columns="lon_bin", values="n_floats")
+        .sort_index()
+        .sort_index(axis=1)
+        .fillna(0.0)
+    )
+
+    lat_centers = np.array(pivot.index)
+    lon_centers = np.array(pivot.columns)
+    # Bin edges: each center is the midpoint of a 5-degree cell, so edges are ±2.5°
+    lat_edges = np.concatenate([[lat_centers[0] - 2.5], lat_centers + 2.5])
+    lon_edges = np.concatenate([[lon_centers[0] - 2.5], lon_centers + 2.5])
+
+    fig = plt.figure(figsize=(10, 8))
+    ax  = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
+    ax.set_extent([LON_MIN, LON_MAX, LAT_MIN, LAT_MAX], crs=ccrs.PlateCarree())
+
+    mesh = ax.pcolormesh(
+        lon_edges, lat_edges, pivot.values,
+        vmin=VMIN, vmax=VMAX,
+        cmap="YlOrRd",
+        transform=ccrs.PlateCarree(),
+        zorder=1,
+    )
+
+    ax.add_feature(cfeature.LAND, zorder=100, edgecolor="k", facecolor="lightgray")
+    ax.add_feature(cfeature.COASTLINE, zorder=101, linewidth=0.7)
+
+    gl = ax.gridlines(draw_labels=True, linestyle="--", alpha=0.5, zorder=102)
+    gl.top_labels   = False
+    gl.right_labels = False
+
+    # Overlay the CCS Analysis Bounds — the core diagnostic of this script
+    draw_ccs_bounds(ax, ccs_bounds)
+
+    cbar = plt.colorbar(mesh, ax=ax, fraction=0.03, pad=0.04)
+    cbar.set_label("Unique Floats per 5°×5° Cell", fontsize=11)
+
+    total_floats = int(year_census["n_floats"].sum())
+    ax.set_title(
+        f"Argo Float Density ({display_label}) — {year}   "
+        f"(total unique floats: {total_floats})",
+        fontsize=13, pad=10,
+    )
+
+    out_path = os.path.join(out_dir, f"float_census_{layer_name}_{year}.png")
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)   # Critical: prevents memory accumulation across 100+ iterations
+    return out_path
+
+
+def plot_layer_mean(census, layer_name, display_label, out_dir, ccs_bounds):
+    # Plots mean float density across all years for one depth layer.
+    #
+    # To get a true mean (not just the mean of years-with-floats), we first
+    # build a full year×cell grid by reindexing with all (year, lat_bin, lon_bin)
+    # combinations, filling missing cells with 0. Then we average over years.
+    # Without this reindex, cells with no floats in some years would show an
+    # inflated mean (e.g., a cell with floats in only 5 years would average over
+    # those 5 years only, not all 26).
+    #
+    # Inputs:
+    #   census        - Full census DataFrame: [year, lat_bin, lon_bin, n_floats]
+    #   layer_name    - Short key for filename (e.g., "source")
+    #   display_label - Human-readable name for title
+    #   out_dir       - Absolute path to output subfolder
+    #   ccs_bounds    - Dict from get_ccs_bounds()
+    #
+    # Saves: float_census_{layer_name}_mean.png
+    # Returns: absolute path to the saved PNG
+    all_years = census["year"].unique()
+    all_lat   = census["lat_bin"].unique()
+    all_lon   = census["lon_bin"].unique()
+
+    # Build a full grid so empty cells contribute zeros to the mean
+    full_index = pd.MultiIndex.from_product(
+        [all_years, all_lat, all_lon],
+        names=["year", "lat_bin", "lon_bin"],
+    )
+    census_full = (
+        census.set_index(["year", "lat_bin", "lon_bin"])
+        .reindex(full_index, fill_value=0)
+        .reset_index()
+    )
+
+    mean_density = (
+        census_full
+        .groupby(["lat_bin", "lon_bin"])["n_floats"]
+        .mean()
+        .reset_index()
+        .rename(columns={"n_floats": "mean_n_floats"})
+    )
+
+    pivot = (
+        mean_density
+        .pivot(index="lat_bin", columns="lon_bin", values="mean_n_floats")
+        .sort_index()
+        .sort_index(axis=1)
+        .fillna(0.0)
+    )
+
+    lat_centers = np.array(pivot.index)
+    lon_centers = np.array(pivot.columns)
+    lat_edges   = np.concatenate([[lat_centers[0] - 2.5], lat_centers + 2.5])
+    lon_edges   = np.concatenate([[lon_centers[0] - 2.5], lon_centers + 2.5])
+
+    fig = plt.figure(figsize=(10, 8))
+    ax  = fig.add_subplot(1, 1, 1, projection=ccrs.PlateCarree())
+    ax.set_extent([LON_MIN, LON_MAX, LAT_MIN, LAT_MAX], crs=ccrs.PlateCarree())
+
+    mesh = ax.pcolormesh(
+        lon_edges, lat_edges, pivot.values,
+        vmin=VMIN, vmax=VMAX,
+        cmap="YlOrRd",
+        transform=ccrs.PlateCarree(),
+        zorder=1,
+    )
+
+    ax.add_feature(cfeature.LAND, zorder=100, edgecolor="k", facecolor="lightgray")
+    ax.add_feature(cfeature.COASTLINE, zorder=101, linewidth=0.7)
+
+    gl = ax.gridlines(draw_labels=True, linestyle="--", alpha=0.5, zorder=102)
+    gl.top_labels   = False
+    gl.right_labels = False
+
+    draw_ccs_bounds(ax, ccs_bounds)
+
+    cbar = plt.colorbar(mesh, ax=ax, fraction=0.03, pad=0.04)
+    cbar.set_label("Mean Unique Floats per 5°×5° Cell (1999–2025)", fontsize=11)
+
+    n_years = len(all_years)
+    ax.set_title(
+        f"Mean Argo Float Density ({display_label}) — 1999–2025 "
+        f"(averaged over {n_years} years)",
+        fontsize=13, pad=10,
+    )
+
+    out_path = os.path.join(out_dir, f"float_census_{layer_name}_mean.png")
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[census/{layer_name}] Mean map saved → {out_path}")
+    return out_path
+
+
+def plot_all_years_for_layer(census, layer_name, display_label, out_dir, ccs_bounds):
+    # Iterates over every year present in the census and calls plot_year().
+    #
+    # Prints one progress line per year so the user can track the loop.
+    # plt.close() inside plot_year() ensures memory does not accumulate
+    # across the ~26 iterations per layer call.
+    #
+    # Inputs:
+    #   census        - Full census DataFrame: [year, lat_bin, lon_bin, n_floats]
+    #   layer_name    - Short key (e.g., "source") for filenames and log messages
+    #   display_label - Human-readable name (e.g., "Source (150-400m)") for plot titles
+    #   out_dir       - Absolute path to output subfolder
+    #   ccs_bounds    - Dict from get_ccs_bounds(), passed to each plot_year() call
+    years = sorted(census["year"].unique())
+    print(f"[census/{layer_name}] Generating {len(years)} per-year PNGs ...")
+    for year in years:
+        year_df = census[census["year"] == year][["lat_bin", "lon_bin", "n_floats"]].copy()
+        path = plot_year(year_df, year, layer_name, display_label, out_dir, ccs_bounds)
+        print(f"[census/{layer_name}]   {year} → {os.path.basename(path)}")
+    print(f"[census/{layer_name}] Per-year PNGs done.")
