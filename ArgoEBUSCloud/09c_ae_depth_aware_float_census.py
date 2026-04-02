@@ -120,3 +120,122 @@ def get_ccs_bounds():
     """
     reg = get_ebus_registry()["californiav2"]
     return {"lat": reg["lat"], "lon": reg["lon"]}
+
+
+# ---------------------------------------------------------------------------
+# FETCH
+# ---------------------------------------------------------------------------
+
+def fetch_layer_data(layer_name, pres_min, pres_max):
+    # Fetch raw per-dive Argo float positions for one depth layer across all
+    # years 1999-2025, using the broad "california" domain.
+    #
+    # For the "alldepths" layer (pres_min is None), calls get_float_history()
+    # with no pressure filter — identical behavior to script 09. For all other
+    # layers, calls get_float_history_by_layer() which restricts to dives that
+    # had at least one measurement in [pres_min, pres_max] dbar.
+    #
+    # Uses the same 5-year FETCH_CHUNKS as script 09 to stay within ERDDAP row
+    # limits per request (~14k rows/chunk for all-depths; fewer for deep layers).
+    # Chunk failures are caught individually — a single ERDDAP timeout does not
+    # abort the whole run. Missing chunks will appear as zero-float years in the
+    # output, clearly distinguishable from sparse-but-real coverage.
+    #
+    # Inputs:
+    #   layer_name - Short string key (e.g., "source") used in log messages.
+    #   pres_min   - Lower pressure bound in dbar, or None for no filter.
+    #   pres_max   - Upper pressure bound in dbar, or None for no filter.
+    #
+    # Returns a single concatenated DataFrame with columns:
+    #   platform_number, lat, lon, time, time_days, year (int)
+    frames = []
+    for start_date, end_date in FETCH_CHUNKS:
+        print(f"[census/{layer_name}] Fetching {start_date} → {end_date} ...", flush=True)
+        try:
+            if pres_min is None:
+                # All-depths: no pressure filter, identical to script 09
+                chunk = get_float_history(
+                    region="california",
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            else:
+                chunk = get_float_history_by_layer(
+                    region="california",
+                    pres_min=pres_min,
+                    pres_max=pres_max,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+            print(f"[census/{layer_name}]   Got {len(chunk):,} dives.")
+            frames.append(chunk)
+        except Exception as exc:
+            print(f"[census/{layer_name}]   WARNING: chunk failed — {exc}")
+
+    if not frames:
+        raise RuntimeError(f"[census/{layer_name}] All ERDDAP chunks failed. Cannot continue.")
+
+    df = pd.concat(frames, ignore_index=True)
+    df["year"] = df["time"].dt.year
+    print(f"[census/{layer_name}] Total: {len(df):,} dives, {df['year'].nunique()} years.")
+    return df
+
+
+# ---------------------------------------------------------------------------
+# CENSUS BUILDING
+# ---------------------------------------------------------------------------
+
+def build_census(df):
+    # Bins dive positions onto a 5x5 degree grid and counts unique float WMO IDs
+    # (platform_number) per (year, lat_bin, lon_bin) cell.
+    #
+    # Bin centers are placed at the midpoint of each 5-degree cell:
+    #   lat_bin = floor(lat / 5) * 5 + 2.5   e.g. lat=32.1 → bin 32.5
+    #   lon_bin = floor(lon / 5) * 5 + 2.5   e.g. lon=-122.7 → bin -122.5
+    #
+    # Why unique floats, not dive count?
+    #   One float making 30 dives in a cell represents one independent spatial
+    #   sensor for the Gaussian Process. Using unique floats gives a true picture
+    #   of independent GP support points, not ping volume.
+    #
+    # Inputs:
+    #   df - DataFrame from fetch_layer_data() with columns:
+    #        platform_number, lat, lon, time, time_days, year
+    #
+    # Returns DataFrame with columns: year, lat_bin, lon_bin, n_floats
+    df = df.copy()
+    df["lat_bin"] = (np.floor(df["lat"] / 5.0) * 5.0) + 2.5
+    df["lon_bin"] = (np.floor(df["lon"] / 5.0) * 5.0) + 2.5
+
+    census = (
+        df.groupby(["year", "lat_bin", "lon_bin"])["platform_number"]
+        .nunique()
+        .reset_index()
+        .rename(columns={"platform_number": "n_floats"})
+    )
+    print(f"[census] {len(census):,} (year, cell) records built.")
+    return census
+
+
+# ---------------------------------------------------------------------------
+# CSV SAVING
+# ---------------------------------------------------------------------------
+
+def save_census_csv(census, layer_name, out_dir):
+    # Saves the census DataFrame for one layer to CSV.
+    #
+    # Filename pattern: float_census_depth_aware_{layer_name}_1999_2025.csv
+    #
+    # This is the primary archival output — the PNGs are derived from these CSVs
+    # and can be regenerated. The CSVs are the ground truth and are suitable for
+    # downstream analysis (e.g., 09b-style persistence tables).
+    #
+    # Inputs:
+    #   census     - DataFrame with columns: year, lat_bin, lon_bin, n_floats
+    #   layer_name - Short key (e.g., "source") used in the filename
+    #   out_dir    - Absolute path to the output subfolder
+    csv_name = f"float_census_depth_aware_{layer_name}_1999_2025.csv"
+    csv_path = os.path.join(out_dir, csv_name)
+    census.to_csv(csv_path, index=False)
+    print(f"[census/{layer_name}] CSV saved → {csv_path}")
+    return csv_path
