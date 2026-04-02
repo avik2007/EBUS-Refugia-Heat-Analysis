@@ -43,3 +43,4 @@ ArgoData/
 AE_LLM_Research/
 proposal_for_claudemd.txt
 .git-backup/
+.worktrees/
