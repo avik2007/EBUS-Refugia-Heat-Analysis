@@ -313,7 +313,9 @@ def get_float_history_by_layer(region="california", pres_min=0, pres_max=100,
     erddap_url = f"{base_url}?{encoded_query}"
 
     try:
-        resp = requests.get(erddap_url, timeout=60)
+        # timeout=120: deep-layer queries scan the full raw dataset before filtering;
+        # 60s is too short when the server is under load.
+        resp = requests.get(erddap_url, timeout=120)
         resp.raise_for_status()
         df = pd.read_csv(io.StringIO(resp.text), skiprows=[1])
     except Exception as e:
@@ -324,10 +326,23 @@ def get_float_history_by_layer(region="california", pres_min=0, pres_max=100,
             f"Original error: {e}"
         )
 
+    # Guard: ERDDAP returned a valid response but no qualifying rows.
+    # Without this check, pd.to_datetime(df["time"]) raises KeyError when the
+    # "time" column is absent in a zero-row (or header-only) response.
+    # Return an empty typed DataFrame so callers can detect this via len(df)==0.
+    if df.empty:
+        return pd.DataFrame(columns=["platform_number", "lat", "lon", "time", "time_days"])
+
     df["time"] = pd.to_datetime(df["time"], utc=True)
     baseline = pd.Timestamp("1999-01-01", tz="UTC")
     df["time_days"] = (df["time"] - baseline).dt.total_seconds() / 86400.0
     df = df.rename(columns={"latitude": "lat", "longitude": "lon"})
+
+    # Defensive dedup: &distinct() should already guarantee one row per
+    # (platform_number, time) pair, but guard explicitly against any future
+    # ERDDAP server behavior change.
+    df = df.drop_duplicates(subset=["platform_number", "time"])
+
     return df[["platform_number", "lat", "lon", "time", "time_days"]]
 
 
