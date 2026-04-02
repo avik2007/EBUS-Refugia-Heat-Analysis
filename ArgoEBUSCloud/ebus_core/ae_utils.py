@@ -250,6 +250,87 @@ def get_float_history(region="california", start_date=None, end_date=None):
     return df[["platform_number", "lat", "lon", "time", "time_days"]]
 
 
+def get_float_history_by_layer(region="california", pres_min=0, pres_max=100,
+                                start_date=None, end_date=None):
+    # Retrieve per-dive Argo float positions filtered to a specific pressure (depth) range.
+    #
+    # Identical to get_float_history() except that it adds pressure constraints to the
+    # ERDDAP query, so only dives that had at least one measurement in [pres_min, pres_max]
+    # dbar are returned. This is used by the depth-aware census (09c) to count floats
+    # that actually profiled into each scientific layer.
+    #
+    # Critical detail: pres is a FILTER CONSTRAINT only — it is NOT included in the
+    # returned columns. The column list is identical to get_float_history(). This means
+    # &distinct() collapses to unique (float, time) dives, not unique (float, time, pres)
+    # rows. A float with 10 measurements in the source layer still appears once per dive.
+    #
+    # Inputs:
+    #   region     - Key into get_ebus_registry(). Determines lat/lon spatial window.
+    #   pres_min   - Lower pressure bound in dbar (e.g., 150 for source layer).
+    #   pres_max   - Upper pressure bound in dbar (e.g., 400 for source layer).
+    #   start_date - ISO string "YYYY-MM-DD". Falls back to registry time[0] if None.
+    #   end_date   - ISO string "YYYY-MM-DD". Falls back to registry time[1] if None.
+    #
+    # Output: DataFrame with columns:
+    #   platform_number (str)  - Argo float WMO ID
+    #   lat (float)            - Dive latitude, degrees N
+    #   lon (float)            - Dive longitude, degrees E
+    #   time (datetime, UTC)   - Dive timestamp
+    #   time_days (float)      - Days since 1999-01-01 (matches OHC parquet baseline)
+    import pandas as pd
+    import io
+    import requests
+
+    registry = get_ebus_registry()
+    if region not in registry:
+        raise ValueError(f"Region '{region}' not found in registry. Known: {list(registry.keys())}")
+
+    reg = registry[region]
+
+    t_start = start_date if start_date else reg["time"][0]
+    t_end   = end_date   if end_date   else reg["time"][1]
+
+    lat_min, lat_max = reg["lat"]
+    lon_min, lon_max = reg["lon"]
+
+    base_url = "https://erddap.ifremer.fr/erddap/tabledap/ArgoFloats.csv"
+
+    # Build the query string. pres is a constraint, NOT a requested column.
+    # Column list is identical to get_float_history() so downstream census code
+    # can treat both functions' outputs identically.
+    raw_query = (
+        f"platform_number,time,latitude,longitude"
+        f"&latitude>={lat_min}&latitude<={lat_max}"
+        f"&longitude>={lon_min}&longitude<={lon_max}"
+        f"&time>={t_start}T00:00:00Z"
+        f"&time<={t_end}T23:59:59Z"
+        f"&pres>={pres_min}&pres<={pres_max}"
+        f"&distinct()"
+    )
+
+    # Tomcat 11 on erddap.ifremer.fr requires < and > to be percent-encoded
+    encoded_query = raw_query.replace("<", "%3C").replace(">", "%3E")
+    erddap_url = f"{base_url}?{encoded_query}"
+
+    try:
+        resp = requests.get(erddap_url, timeout=60)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text), skiprows=[1])
+    except Exception as e:
+        raise RuntimeError(
+            f"ERDDAP layer query failed for region '{region}' "
+            f"pres [{pres_min}, {pres_max}] ({t_start} to {t_end}).\n"
+            f"URL attempted: {erddap_url}\n"
+            f"Original error: {e}"
+        )
+
+    df["time"] = pd.to_datetime(df["time"], utc=True)
+    baseline = pd.Timestamp("1999-01-01", tz="UTC")
+    df["time_days"] = (df["time"] - baseline).dt.total_seconds() / 86400.0
+    df = df.rename(columns={"latitude": "lat", "longitude": "lon"})
+    return df[["platform_number", "lat", "lon", "time", "time_days"]]
+
+
 def calculate_bin(value, step):
     """Generic binning helper."""
     return np.floor(value / step) * step
