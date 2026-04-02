@@ -19,7 +19,7 @@ OUTPUT (all in AEResults/aeplots/float_census_depth_aware/):
     Per-year skin PNGs:          float_census_skin_{year}.png             (26 files)
     Per-year source PNGs:        float_census_source_{year}.png           (26 files)
     Per-year background PNGs:    float_census_background_{year}.png       (26 files)
-    Per-layer mean PNGs:         float_census_{layer}_mean.png            ( 3 files)
+    Per-layer mean PNGs:         float_census_{layer}_mean.png            ( 4 files)
     CSVs:                        float_census_depth_aware_{layer}_1999_2025.csv (4 files)
 
 USAGE:
@@ -506,4 +506,3 @@ if __name__ == "__main__":
         plot_layer_mean(census, layer_name, display_label, out_dir, ccs_bounds)
 
     print("\n[census] All layers complete. Done.")
-    print(f"[census/{layer_name}] Per-year PNGs done.")
