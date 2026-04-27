@@ -32,3 +32,5 @@ dependencies:
   - pip
   - pip:
     - coiled         # "Easy Mode" Dask cluster provisioning
+    - pydantic>=2.0  # MLOps foundation: typed config schema (Phase 1)
+    - pytest>=7.0    # MLOps foundation: test runner (Phase 1)
