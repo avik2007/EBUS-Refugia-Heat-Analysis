@@ -43,6 +43,22 @@ ArgoEBUSAnalysis/
 │   │                                      #   Output: aelogs/{run_id}_3dmatern_w45/
 │   │                                      #   Result: 19/23 pass (83%), median RMSRE 3.86%
 │   │
+│   ├── 09_ae_longterm_float_census.py    # Float density census across broad California
+│   │                                      #   domain (lat [25,50], lon [-140,-110]) for
+│   │                                      #   1999–2025. Fetches via ERDDAP in 5-year
+│   │                                      #   chunks, bins on 5°×5° grid (unique floats),
+│   │                                      #   saves one Cartopy PNG per year + full CSV.
+│   │                                      #   Purpose: empirical basis for californiav3.
+│   │                                      #   Output: AEResults/aeplots/float_census_california/
+│   │
+│   ├── 09b_ae_analyze_float_census.py   # Analysis companion to script 09. Reads the
+│   │                                      #   census CSV and produces: annual totals table
+│   │                                      #   + bar chart, top persistent cell table, mean
+│   │                                      #   density Cartopy map, and the californiav3
+│   │                                      #   domain recommendation (cells present in
+│   │                                      #   ≥20/25 years + implied bounding box).
+│   │                                      #   Output: AEResults/aeplots/float_census_california/
+│   │
 │   ├── test_pipeline.py                   # Integration tests for the cloud pipeline.
 │   │
 │   ├── ocean_cloud.yml                    # Conda environment spec for cloud workers
@@ -98,7 +114,12 @@ ArgoEBUSAnalysis/
 │
 ├── AEResults/
 │   ├── aeplots/                           # Output PNGs — e.g., ebus_2015_trend.png
-│   │   └── snapshot_{run_id}/            # Kriging snapshot PNGs, one per window center.
+│   │   ├── snapshot_{run_id}/            # Kriging snapshot PNGs, one per window center.
+│   │   └── float_census_california/      # Script 09/09b census output (2026-04-02).
+│   │       ├── float_census_california_{YEAR}.png   # Per-year float density maps (2001–2025).
+│   │       ├── float_census_annual_totals.png        # Bar chart: total floats per year.
+│   │       ├── float_census_mean_density.png         # Cartopy map: 26-year mean float density.
+│   │       └── float_census_california_1999_2025.csv # Full census: year, lat_bin, lon_bin, n_floats.
 │   ├── aeresults/                         # Output parquet/CSV results files.
 │   └── aelogs/                            # Per-run audit CSVs, CV pickles, and physics history PNGs.
 │       ├── {run_id}/                      # Script 03 output (2D RBF, DEPRECATED 2026-03-30).
@@ -125,10 +146,14 @@ ArgoEBUSAnalysis/
 │   ├── AE_claude_todo.md                  # Forward-looking task list with human notes.
 │   ├── AE_claude_recentactions.md         # Log of completed Claude sessions.
 │   ├── AE_claude_lessons.md               # Hard-won implementation lessons.
-│   └── AE_plan_3d_gpr_matern.md          # Design plan: 3D spatio-temporal GP with
-│                                          #   Exponential (Matern nu=0.5) and RBF kernels.
-│                                          #   Documents math, scaling approach, and what
-│                                          #   changed in argoebus_gp_physics.py.
+│   ├── AE_plan_3d_gpr_matern.md          # Design plan: 3D spatio-temporal GP with
+│   │                                      #   Exponential (Matern nu=0.5) and RBF kernels.
+│   │                                      #   Documents math, scaling approach, and what
+│   │                                      #   changed in argoebus_gp_physics.py.
+│   ├── AE_plan_temporal_spatial_experiments.md  # Plan for FX2 temporal resolution and
+│   │                                      #   spatial bounds experiments.
+│   └── 2026-04-01_float_census_plan.md   # Original plan for Script 09 (superseded by
+│                                          #   the revised per-year PNG design, 2026-04-02).
 │
 ├── argo_gemini_actions/                   # Gemini LLM research logs.
 │   ├── AE_gemini_todo.md                  # Forward-looking research/science task list.
