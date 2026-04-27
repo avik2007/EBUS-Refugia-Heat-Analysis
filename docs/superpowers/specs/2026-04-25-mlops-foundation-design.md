@@ -1,7 +1,7 @@
 # MLOps Foundation — Config-Driven Runs + Reproducibility Manifests
 
-**Date:** 2026-04-25
-**Status:** Approved (design)
+**Date:** 2026-04-25 (amended 2026-04-26 per Gemini review)
+**Status:** Approved (design) — conditions from `2026-04-26-mlops-review-results.md` integrated below
 **Author:** Avik Mondal (with Claude)
 **Audience target (sequenced):** practitioner-grade infra first, then hiring-target demo polish layered on top.
 
@@ -107,6 +107,13 @@ s3:
   bucket: argo-ebus-project-data-abm
   # parquet name auto-derived from above fields (current naming convention preserved)
 
+# QC policy (Gemini review gap §3: Argo QC flags + exclusions must be recorded for reproducibility)
+qc_policy:
+  argo_qc_flags_accepted: [1, 2]    # Argo standard: 1=good, 2=probably_good. Default rejects 3,4,5,8,9.
+  excluded_platform_numbers: []      # e.g., known-bad WMO IDs
+  excluded_project_names: []         # e.g., upstream Argo programs to skip
+  notes: ""                          # free-form provenance note (e.g., "raw mode only, no DM")
+
 description: "californiav3 Source Layer ingestion, FX2 t10"  # free-form, in manifest
 ```
 
@@ -134,15 +141,51 @@ time_step: 10.0
 depth_range: [100, 500]
 
 gpr:
+  # Polymorphic kernel block (Gemini review gap §9): the active kernel selects which
+  # of {kernel_rbf, kernel_matern05, kernel_gibbs} sub-blocks is read. Schema validator
+  # rejects sub-blocks not matching kernel_type.
   mode: "3D"                       # 2D | 3D
-  kernel_type: matern0.5           # rbf | matern0.5 | gibbs (future)
+  kernel_type: matern0.5           # rbf | matern0.5 | gibbs
+
   window_size_days: 45
   step_size_days: 10
   min_bins: 10
   noise_val: 0.1
   time_ls_bounds_days: [15.0, 45.0]
-  spatial_ls_upper_bound: 10
+
+  # Per-axis spatial length-scale bounds (Gemini review gap §3: EBUS jet dynamics
+  # demand zonal/meridional asymmetry; single spatial_ls_upper_bound was reductive).
+  lat_ls_bounds: [1.0e-2, 10.0]    # latitude length-scale optimizer bounds (in scaler units)
+  lon_ls_bounds: [1.0e-2, 5.0]     # longitude length-scale optimizer bounds (in scaler units)
+
+  # Polymorphic kernel sub-blocks (only the one matching kernel_type is read).
+  # kernel_rbf: {}                                  # no extra params (placeholder)
+  # kernel_matern05: {}                             # no extra params (placeholder)
+  # kernel_gibbs:                                   # future RG-Gibbs entry
+  #                                                 # (per 2026-04-11 spec + 2026-04-26 l(x) directive)
+  #   # Lengthscale function: l(d) = l_min + (l_max - l_min) / (1 + exp(-k * (d - d_0)))
+  #   # where d = dist_to_coast_km. d_0 and k are LEARNABLE; l_min/l_max are bounds.
+  #   l_form: "sigmoid_dist_to_coast"
+  #   l_min_km: 100.0                               # coastal lengthscale (fixed lower bound)
+  #   l_max_km: 400.0                               # offshore lengthscale (fixed upper bound)
+  #   d_transition_init_km: 300.0                   # initial seed for learnable d_0
+  #   d_transition_bounds_km: [50.0, 700.0]         # optimizer bounds for d_0
+  #   k_steepness_init: 0.01                        # initial seed for learnable k (per km)
+  #   k_steepness_bounds: [1.0e-4, 1.0]             # optimizer bounds for k
+  #   anisotropy_lat_lon_ratio: 2.0                 # enforced 2:1 within lengthscale
+  #   climatology_source: "roemmich-gilson-v3"      # mean function reference (RG climatology)
+
   run_suffix: "_3dmatern_w45"      # appended to auto run_id
+
+# Physics parameters (Gemini review gap §3: thermodynamic + QC thresholds belong
+# in the config so OHC computation is reproducible).
+physics_params:
+  ohc_reference_pressure_dbar: 0.0   # Roemmich-Gilson convention: surface reference
+  ohc_depth_top_m: 0                 # OHC integration upper bound (overrides depth_range[0] if set)
+  ohc_depth_bot_m: null              # OHC integration lower bound (defaults to depth_range[1])
+  teos10_convention: "TEOS-10-2010"  # TEOS-10 release year; locks gsw library semantics
+  qc_min_obs_per_bin: 1              # bins with fewer obs are dropped pre-GPR
+  qc_outlier_sigma: null             # optional: drop bins with |T-clim| > N*sigma; null disables
 
 outputs:
   aelogs_dir: AEResults/aelogs     # default; override for experiments
@@ -160,6 +203,10 @@ description: "californiav3 Source Layer canonical 3D Matern w45"
 - `time_step ≤ step_size_days` (FX bin-aliasing rule, hard-won)
 - `time_ls_bounds_days[0] ≥ time_step` (lower bound respects bin width)
 - `date_start < date_end`, parsed to `datetime.date`
+- `lat_ls_bounds[0] < lat_ls_bounds[1]` and `lon_ls_bounds[0] < lon_ls_bounds[1]` (positive intervals)
+- `gpr.kernel_type` must match the polymorphic sub-block present (e.g., `kernel_type: gibbs` requires `kernel_gibbs` block; rbf / matern0.5 sub-blocks may be omitted)
+- `qc_policy.argo_qc_flags_accepted` ⊆ {1, 2, 3, 4, 5, 8, 9} (Argo flag domain)
+- `physics_params.ohc_depth_top_m < physics_params.ohc_depth_bot_m` when both set
 - Strict mode: unknown YAML keys → ERROR (catches typos)
 
 ### 3.4 Schema versioning
@@ -220,6 +267,7 @@ No hash suffix in the path. Disambiguation enforced by collision detector (§4.3
     "python_version": "3.11.7",
     "key_packages": {
       "scikit-learn": "1.3.2",
+      "scipy": "1.11.4",
       "xarray": "2024.1.1",
       "numpy": "1.26.3",
       "pandas": "2.1.4",
@@ -229,6 +277,7 @@ No hash suffix in the path. Disambiguation enforced by collision detector (§4.3
       "matplotlib": "3.8.2",
       "cartopy": "0.22.0"
     },
+    "teos10_convention": "TEOS-10-2010",
     "conda_list_full": "AEResults/aelogs/{run_id}/conda_list.txt"
   },
 
@@ -237,7 +286,10 @@ No hash suffix in the path. Disambiguation enforced by collision detector (§4.3
     "s3_path": "s3://argo-ebus-project-data-abm/californiav3_..._d100_500.parquet",
     "ingestion_manifest_hash": "f72ed1c8...",
     "parquet_etag": "<S3 ETag>",
-    "parquet_size_bytes": 18234567
+    "parquet_size_bytes": 18234567,
+    "erddap_dataset_id": "ArgoFloats",
+    "erddap_server_url": "https://erddap.ifremer.fr/erddap",
+    "data_access_timestamp": "2026-04-25T13:18:42Z"
   },
 
   "outputs": {
@@ -267,9 +319,22 @@ persists full output to `conda_list.txt` next to manifest, plus inlines a curate
 `key_packages` dict for quick eyeball.
 
 **`key_packages` whitelist is part of `schema_version: 1`:**
-`scikit-learn, xarray, numpy, pandas, gsw, coiled, dask, matplotlib, cartopy`.
+`scikit-learn, scipy, xarray, numpy, pandas, gsw, coiled, dask, matplotlib, cartopy`.
 Adding/removing entries requires a schema bump. The full `conda_list.txt` is the
 authoritative source — the inline dict is a convenience surface.
+
+**ERDDAP lineage (Gemini review gap §4):** `parquet_etag` alone is insufficient
+because ERDDAP datasets are reprocessed upstream. Manifest captures
+`erddap_dataset_id` (e.g., `ArgoFloats`), `erddap_server_url`, and
+`data_access_timestamp` (UTC ISO-8601 of when ingestion ran the fetch).
+Cross-reference: an ingestion manifest with the same `dataset_id` but later
+timestamp may produce different parquet content even with identical configs.
+
+**TEOS-10 convention (Gemini review gap §4):** `env.teos10_convention` records
+the TEOS-10 release year governing salinity/temperature conversions. The `gsw`
+library version (in `key_packages`) determines the implementation; the
+convention string locks the semantics independently. Release-year strings:
+`TEOS-10-2010` (the default) is the original Roemmich-Gilson-aligned convention.
 
 ### 4.3 Collision detector
 
@@ -356,10 +421,18 @@ No retries, no fallbacks for impossible scenarios. Trust internal pipeline guara
 
 For every existing `AEResults/aelogs/*/` directory:
 1. Parse the run_id to recover `region`, dates, grid resolution, depth range,
-   `run_suffix`.
-2. Inspect audit CSV columns to confirm GPR mode (2D/3D) and kernel type.
-3. Read script defaults from the version of `05_ae_update_tomatern0.5.py` /
-   `07_ae_deeper_layers.py` that produced the run (use git blame if needed).
+   `run_suffix`. Record verbatim — do NOT normalize to the 2026-04-26 RG-aligned
+   depth-layer standardization (old runs retain old depth bounds, e.g.,
+   `[150, 400]` for the 2015 Source Layer runs).
+2. Inspect audit CSV columns + headers to confirm GPR mode (2D/3D), kernel type,
+   actual length-scale bounds, noise floor, and any other GPR settings the audit
+   recorded.
+3. **Per Gemini review gap §6: do NOT assume script defaults.** If a parameter
+   cannot be recovered from `(run_id || audit CSV header)`, write `null` (or omit)
+   in the generated YAML and add a `description` note: e.g.,
+   `"backfilled 2026-04-NN; qc_policy + physics_params unrecoverable from
+   pre-manifest run, treat as legacy"`. Schema validator allows `null` for these
+   forensic-mode fields when the YAML carries a `legacy_backfill: true` marker.
 4. Write `configs/<region>/<derived_filename>.yaml` with `schema_version: 1` and a
    `description` noting "backfilled from {aelogs_dir} on {date}".
 
@@ -457,9 +530,13 @@ These are explicitly **not** in this spec but unlocked by it:
 - **C-tier (long-term):** pip-installable `argo-ebus` package, Docker cloud workers,
   region template generator for new EBUS regions, public dashboard.
 - **RG-Gibbs integration:** the pending `2026-04-11-rg-gibbs-nonstationary-gpr-design.md`
-  spec lands its new GPR engine in `ebus_core/argoebus_gp_physics.py`. Once the
-  MLOps foundation exists, the RG-Gibbs config gets a `kernel_type: gibbs` entry
-  in `AnalysisConfig.gpr` and inherits all manifest + registry plumbing for free.
+  spec (with the 2026-04-26 l(x) directive: learnable sigmoid of `dist_to_coast_km`
+  with fixed `l_min`/`l_max` and learnable `d_0`/`k`, 2:1 lat:lon anisotropy) lands
+  its new GPR engine in `ebus_core/argoebus_gp_physics.py`. The MLOps foundation's
+  polymorphic `gpr` block already reserves the `kernel_gibbs` sub-block shape
+  (see §3.2), so the RG-Gibbs entry slots in by setting `gpr.kernel_type: gibbs`
+  and populating the sub-block fields. Manifest + registry plumbing is inherited
+  unchanged.
 
 ---
 

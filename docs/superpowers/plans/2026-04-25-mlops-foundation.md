@@ -9,6 +9,148 @@
 **Tech Stack:** Python 3.11+, Pydantic v2, PyYAML, argparse, pytest. Conda env `ebus-cloud-env`. All commands run via `conda run -n ebus-cloud-env <cmd>` per project rule.
 
 **Spec:** `docs/superpowers/specs/2026-04-25-mlops-foundation-design.md`
+**Spec amendment date:** 2026-04-26 (per Gemini review — see §A below)
+
+---
+
+## §A — 2026-04-26 Amendment Block (Gemini review integration)
+
+Read this section in addition to each task you execute. It overrides task text
+where they conflict. Source: `docs/superpowers/specs/2026-04-26-mlops-review-results.md`
+plus `docs/superpowers/specs/2026-04-26-rg-gibbs-l-x-directive.md`.
+
+### A.1 IngestionConfig (affects Task 1.1)
+
+`IngestionConfig` MUST also include a `qc_policy` sub-model:
+
+```python
+class QCPolicyBlock(BaseModel):
+    """
+    Records which Argo QC flags were accepted and what was excluded so an
+    ingestion run is reproducible. Argo flag domain: 1=good, 2=probably_good,
+    3=probably_bad, 4=bad, 5=changed, 8=interpolated, 9=missing.
+    """
+    model_config = ConfigDict(extra="forbid")
+    argo_qc_flags_accepted: list[int] = Field(default_factory=lambda: [1, 2])
+    excluded_platform_numbers: list[int] = Field(default_factory=list)
+    excluded_project_names: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+    @field_validator("argo_qc_flags_accepted")
+    @classmethod
+    def _flags_in_argo_domain(cls, v):
+        allowed = {1, 2, 3, 4, 5, 8, 9}
+        bad = [f for f in v if f not in allowed]
+        if bad:
+            raise ValueError(f"Argo QC flags must be in {allowed}; got {bad}")
+        return v
+```
+
+Add `qc_policy: QCPolicyBlock = Field(default_factory=QCPolicyBlock)` to
+`IngestionConfig`. Add a unit test asserting (a) defaults `[1, 2]`, (b) flag
+8 in `argo_qc_flags_accepted` validates, (c) flag 99 raises.
+
+### A.2 AnalysisConfig.gpr — split anisotropy + polymorphic kernel (affects all Phase 1 tasks adding `AnalysisConfig`)
+
+Replace the planned `spatial_ls_upper_bound: int` field with **two** fields:
+
+```python
+lat_ls_bounds: Tuple[float, float] = (1.0e-2, 10.0)
+lon_ls_bounds: Tuple[float, float] = (1.0e-2, 5.0)
+```
+
+Both are `(lower, upper)` pairs. Validators: lower < upper, both > 0.
+
+Make `gpr` polymorphic. Define empty placeholder sub-models:
+
+```python
+class KernelRBFBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+class KernelMatern05Block(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+class KernelGibbsBlock(BaseModel):
+    """RG-Gibbs sub-block (per 2026-04-11 spec + 2026-04-26 l(x) directive).
+    Lengthscale: l(d) = l_min + (l_max - l_min) / (1 + exp(-k*(d - d_0))),
+    where d = dist_to_coast_km, d_0 and k are learnable, l_min/l_max are bounds.
+    """
+    model_config = ConfigDict(extra="forbid")
+    l_form: Literal["sigmoid_dist_to_coast"] = "sigmoid_dist_to_coast"
+    l_min_km: float = 100.0
+    l_max_km: float = 400.0
+    d_transition_init_km: float = 300.0
+    d_transition_bounds_km: Tuple[float, float] = (50.0, 700.0)
+    k_steepness_init: float = 0.01
+    k_steepness_bounds: Tuple[float, float] = (1.0e-4, 1.0)
+    anisotropy_lat_lon_ratio: float = 2.0
+    climatology_source: str = "roemmich-gilson-v3"
+```
+
+Inside `GPRBlock`, the three kernel sub-blocks are all `Optional` and a
+`model_validator(mode="after")` enforces: exactly the sub-block matching
+`kernel_type` may be set; the other two must be `None`. Default of all three
+to `None` and have the validator instantiate the matching one with defaults
+if absent. Test with all three kernel_types.
+
+### A.3 AnalysisConfig.physics_params (new top-level block, affects Task that adds AnalysisConfig)
+
+```python
+class PhysicsParamsBlock(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    ohc_reference_pressure_dbar: float = 0.0
+    ohc_depth_top_m: int | None = None         # defaults to depth_range[0]
+    ohc_depth_bot_m: int | None = None         # defaults to depth_range[1]
+    teos10_convention: str = "TEOS-10-2010"
+    qc_min_obs_per_bin: int = 1
+    qc_outlier_sigma: float | None = None
+```
+
+Add `physics_params: PhysicsParamsBlock = Field(default_factory=PhysicsParamsBlock)`
+to `AnalysisConfig`. Validator: when both `ohc_depth_top_m` and `ohc_depth_bot_m`
+are set, top < bot.
+
+### A.4 manifest.py — ERDDAP lineage + TEOS-10 + scipy (affects Task that adds manifest schema/builder)
+
+Manifest `inputs` block adds:
+```python
+"erddap_dataset_id": str,        # e.g., "ArgoFloats"
+"erddap_server_url": str,        # e.g., "https://erddap.ifremer.fr/erddap"
+"data_access_timestamp": str,    # ISO-8601 UTC of when ingestion fetch ran
+```
+Set by ingestion runner only; analysis runner inherits these from the
+referenced ingestion manifest. Backfilled configs may carry `null` here.
+
+Manifest `env.key_packages` whitelist gains `"scipy"` (already in spec).
+Manifest `env` adds top-level `"teos10_convention": str` (default
+`"TEOS-10-2010"`, sourced from `AnalysisConfig.physics_params.teos10_convention`
+when present, else default). Test asserts both fields present in a built
+manifest dict.
+
+### A.5 Phase 4 backfill — null over defaults (affects Tasks 4.1, 4.2)
+
+Backfill MUST NOT assume script defaults for fields that cannot be recovered
+from the run_id or the audit CSV header. Unrecoverable fields are written as
+`null` in YAML. Configs from pre-manifest dirs carry `legacy_backfill: true`
+at top level. The Pydantic schema permits `null` for `qc_policy`,
+`physics_params`, ERDDAP-lineage manifest fields, etc. only when
+`legacy_backfill: true` is set; strict validation otherwise.
+
+Old run depth ranges are recorded verbatim — do NOT normalize 2015-era runs
+(e.g., `[150, 400]` Source) to the 2026-04-26 RG-aligned bounds
+(`[100, 500]`). Phase 4 task acceptance asserts that the regenerated `run_id`
+from the backfilled YAML matches the source `aelogs/{run_id}/` directory name
+exactly.
+
+### A.6 Test additions
+
+In addition to the tests listed per task, add:
+- `test_qc_policy_defaults_and_validation` (A.1)
+- `test_gpr_polymorphic_kernel_blocks_exclusive` (A.2)
+- `test_lat_lon_ls_bounds_split_validates` (A.2)
+- `test_physics_params_depth_ordering` (A.3)
+- `test_manifest_includes_erddap_lineage_and_teos10` (A.4)
+- `test_legacy_backfill_marker_permits_null_provenance` (A.5)
 
 ---
 
