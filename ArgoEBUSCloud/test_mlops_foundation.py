@@ -648,3 +648,55 @@ def test_cli_validate_bad_yaml_exits_2(tmp_path):
     )
     assert proc.returncode == 2
     assert "atlantis" in proc.stderr or "atlantis" in proc.stdout
+
+
+def test_cli_analyze_collision_aborts(tmp_path):
+    """If two analyses with different configs target the same run_id, the
+    second must abort with exit code 3."""
+    cfg_dir = tmp_path / "configs"
+    cfg_dir.mkdir()
+    aelogs_dir = tmp_path / "aelogs"
+    aelogs_dir.mkdir()
+    run_id = "californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45"
+    (aelogs_dir / run_id).mkdir()
+    # Plant a prior manifest with a different config_hash
+    (aelogs_dir / run_id / "manifest.json").write_text(_json.dumps({
+        "schema_version": 1, "kind": "analysis", "run_id": run_id,
+        "config_hash": "deadbeef",
+        "created_at": "2026-04-01T00:00:00Z", "duration_sec": 0,
+        "config": {}, "code": {}, "env": {}, "inputs": {},
+        "outputs": {}, "host": {},
+    }))
+    cfg_path = cfg_dir / "a.yaml"
+    cfg_path.write_text(textwrap.dedent(f"""\
+        schema_version: 1
+        config_kind: analysis
+        input:
+          source: s3
+          s3_path: "s3://b/k.parquet"
+        region: californiav2
+        date_start: "2015-01-01"
+        date_end: "2015-12-31"
+        lat_step: 0.5
+        lon_step: 0.5
+        time_step: 10.0
+        depth_range: [150, 400]
+        gpr:
+          mode: "3D"
+          kernel_type: matern0.5
+          window_size_days: 45
+          step_size_days: 10
+          time_ls_bounds_days: [15.0, 45.0]
+          run_suffix: "_3dmatern_w45"
+        outputs:
+          aelogs_dir: "{aelogs_dir}"
+          aeplots_dir: "{tmp_path / 'aeplots'}"
+          generate_snapshots: false
+          generate_physics_plots: false
+    """))
+    proc = _subprocess.run(
+        ["python", "ArgoEBUSCloud/aebus_cli.py", "analyze", str(cfg_path)],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 3, (proc.stdout, proc.stderr)
+    assert "collision" in (proc.stdout + proc.stderr).lower()
