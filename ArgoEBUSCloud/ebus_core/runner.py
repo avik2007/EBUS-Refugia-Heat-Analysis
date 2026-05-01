@@ -120,27 +120,35 @@ def build_manifest(
       conda_list_dest— where to save conda list output (None = skip)
       cwd            — working directory for git capture (None = cwd of process)
 
-    OUTPUT: dict ready to serialize as manifest.json (all keys defined in §A.4 spec)
+    OUTPUT: dict with these top-level keys:
+      schema_version, kind, run_id, config_hash, created_at, duration_sec,
+      config, code, env, inputs, outputs, host
+      Ready to pass to write_manifest().
     """
     kind = "ingestion" if isinstance(cfg, IngestionConfig) else "analysis"
 
     # Build inputs block. Analysis carries the S3 parquet pointer + any caller
     # extras (etag, erddap lineage). Ingestion has no upstream S3 input.
     if isinstance(cfg, AnalysisConfig):
+        # inputs_extra first so config-derived fields (source, s3_path, ingestion_run_id)
+        # always take precedence — callers cannot accidentally overwrite provenance fields.
         inputs: Dict[str, Any] = {
+            **inputs_extra,
             "source": cfg.input.source,
             "s3_path": cfg.input.s3_path,
             "ingestion_run_id": cfg.input.ingestion_run_id,
-            **inputs_extra,
         }
     else:
-        inputs = {"source": "erddap", **inputs_extra}
+        inputs = {**inputs_extra, "source": "erddap"}
 
     env_block = capture_env(
         conda_env_name="ebus-cloud-env",
         conda_list_dest=conda_list_dest,
     )
-    # §A.4: teos10_convention must appear in env block for reproducibility
+    # §A.4: teos10_convention is a convention family tag ("gsw-3.x"), not a pinned
+    # version. GSW 3.x changed unit conventions and function signatures vs pre-3.0,
+    # so runs with different major versions are not directly comparable. This is
+    # deliberately NOT read from the installed gsw version — it names the API family.
     env_block["teos10_convention"] = "gsw-3.x"
 
     return {

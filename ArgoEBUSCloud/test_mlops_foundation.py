@@ -520,3 +520,23 @@ def test_manifest_includes_erddap_lineage_and_teos10():
     assert m["inputs"]["erddap_server_url"].startswith("https://")
     assert m["inputs"]["data_access_timestamp"] == "2026-04-30T00:00:00Z"
     assert m["env"]["teos10_convention"] == "gsw-3.x"
+
+
+def test_build_manifest_ingestion_config():
+    """build_manifest IngestionConfig branch: kind='ingestion', source='erddap'."""
+    cfg = IngestionConfig(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(0, 100),
+    )
+    m = build_manifest(
+        cfg,
+        outputs={"aelogs_dir": "/tmp/x"},
+        inputs_extra={"erddap_dataset_id": "ArgoFloats"},
+        duration_sec=2.0,
+        conda_list_dest=None,
+    )
+    assert m["kind"] == "ingestion"
+    assert m["inputs"]["source"] == "erddap"
+    assert m["inputs"]["erddap_dataset_id"] == "ArgoFloats"
