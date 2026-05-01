@@ -127,6 +127,9 @@ def run_cloud_pipeline(region="california", lat_step=0.5, lon_step=0.5, time_ste
         client.close()
         cluster.shutdown()
 
+# MLOps seam: runner.py dispatches via this name. Points at run_cloud_pipeline.
+run_ingestion_pipeline = run_cloud_pipeline
+
 if __name__ == "__main__":
     # --- CANONICAL FX2 CONFIGURATION ---
     # Run all three Vertical Sandwich layers for the californiav2 domain with
