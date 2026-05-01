@@ -445,3 +445,29 @@ def test_append_registry_appends_one_line(tmp_path):
     }
     assert parsed["region"] == "californiav2"
     assert parsed["depth_range"] == [0, 100]
+
+
+from ebus_core.runner import derive_run_id
+
+
+def test_derive_run_id_matches_existing_canonical_pattern():
+    cfg = AnalysisConfig(**_valid_analysis_kwargs())
+    rid = derive_run_id(cfg)
+    # Must match the existing canonical run_id pattern produced by
+    # script 05/07 — backward compatibility is the contract.
+    assert rid == (
+        "californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45"
+    )
+
+
+def test_derive_run_id_for_ingestion():
+    cfg = IngestionConfig(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(150, 400),
+    )
+    rid = derive_run_id(cfg)
+    assert rid == (
+        "californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400"
+    )
