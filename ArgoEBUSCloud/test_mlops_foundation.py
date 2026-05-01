@@ -540,3 +540,46 @@ def test_build_manifest_ingestion_config():
     assert m["kind"] == "ingestion"
     assert m["inputs"]["source"] == "erddap"
     assert m["inputs"]["erddap_dataset_id"] == "ArgoFloats"
+
+
+import importlib
+from unittest import mock
+
+from ebus_core.runner import run_analysis
+
+
+def test_run_analysis_dispatches_to_existing_function(tmp_path, monkeypatch):
+    """run_analysis must call _call_run_diagnostic_inspection with config-derived kwargs."""
+    # Override outputs to tmp_path so we don't pollute AEResults/
+    import copy
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    captured_kwargs = {}
+
+    def fake_dispatch(**kwargs):
+        captured_kwargs.update(kwargs)
+        # Simulate run producing an audit CSV under aelogs_dir
+        from ebus_core.runner import derive_run_id
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"audit_{run_id}.csv").write_text("dummy,csv\n")
+        return {"audit_csv": str(out_dir / f"audit_{run_id}.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+
+    result = run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    assert captured_kwargs["region"] == "californiav2"
+    assert captured_kwargs["depth_range"] == (150, 400)
+    assert captured_kwargs["kernel_type"] == "matern0.5"
+    assert captured_kwargs["window_size_days"] == 45
+    assert (tmp_path / "aelogs" / result["run_id"] / "manifest.json").exists()
+    assert (tmp_path / "registry.jsonl").exists()

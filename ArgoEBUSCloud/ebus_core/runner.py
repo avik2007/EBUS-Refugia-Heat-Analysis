@@ -10,12 +10,16 @@ analysis) with a uniform interface that:
 - writes a manifest.json + appends to the JSONL registry
 """
 import datetime as _dt
+import shutil
+import time as _time
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
 from ebus_core.config_schema import AnalysisConfig, IngestionConfig
 from ebus_core.manifest import (
-    canonical_config_dict, capture_code, capture_env, capture_host, config_hash,
+    ManifestCollisionError, append_registry, canonical_config_dict,
+    capture_code, capture_env, capture_host, check_collision, config_hash,
+    write_manifest,
 )
 
 
@@ -164,4 +168,89 @@ def build_manifest(
         "inputs": inputs,
         "outputs": outputs,
         "host": capture_host(),
+    }
+
+
+def _call_run_diagnostic_inspection(**kwargs):
+    # Thin shim: defers import of the GPR script so runner.py stays cheap to import.
+    # Tests monkeypatch this whole function instead of the real script.
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    script_path = Path(__file__).resolve().parents[1] / "05_ae_update_tomatern0.5.py"
+    spec = importlib.util.spec_from_file_location("script_05", script_path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["script_05"] = mod
+    spec.loader.exec_module(mod)
+    return mod.run_diagnostic_inspection(**kwargs)
+
+
+def run_analysis(
+    cfg: AnalysisConfig,
+    registry_path: Optional[Path] = None,
+    force_overwrite: bool = False,
+) -> Dict[str, Any]:
+    # Execute one GPR analysis run end-to-end with manifest + collision detection.
+    # Steps: derive run_id → collision check → dispatch → build manifest → write → registry.
+    run_id = derive_run_id(cfg)
+    aelogs_dir = Path(cfg.outputs.aelogs_dir) / run_id
+    manifest_path = aelogs_dir / "manifest.json"
+    cfg_hash = config_hash(cfg)
+
+    verdict = check_collision(manifest_path, new_hash=cfg_hash)
+    if force_overwrite and aelogs_dir.exists():
+        shutil.rmtree(aelogs_dir)
+
+    aelogs_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pass ALL GPR config fields; the real shim filters to accepted params.
+    # Tests verify kernel_type + window_size_days reach the shim.
+    dispatch_kwargs = {
+        "region": cfg.region,
+        "lat_step": cfg.lat_step,
+        "lon_step": cfg.lon_step,
+        "time_step": cfg.time_step,
+        "depth_range": cfg.depth_range,
+        "mode": cfg.gpr.mode,
+        "kernel_type": cfg.gpr.kernel_type,
+        "window_size_days": cfg.gpr.window_size_days,
+        "step_size_days": cfg.gpr.step_size_days,
+        "min_bins": cfg.gpr.min_bins,
+        "noise_val": cfg.gpr.noise_val,
+        "time_ls_bounds_days": cfg.gpr.time_ls_bounds_days,
+        "run_suffix": cfg.gpr.run_suffix,
+    }
+
+    t0 = _time.time()
+    dispatch_result = _call_run_diagnostic_inspection(**dispatch_kwargs)
+    duration = _time.time() - t0
+
+    audit_csv = (
+        dispatch_result.get("audit_csv")
+        if isinstance(dispatch_result, dict)
+        else str(aelogs_dir / f"audit_{run_id}.csv")
+    )
+    snapshots_dir = str(Path(cfg.outputs.aeplots_dir) / f"snapshot_{run_id}")
+
+    manifest = build_manifest(
+        cfg,
+        outputs={
+            "aelogs_dir": str(aelogs_dir),
+            "audit_csv": audit_csv,
+            "snapshots_dir": snapshots_dir,
+        },
+        inputs_extra={},
+        duration_sec=duration,
+        conda_list_dest=aelogs_dir / "conda_list.txt",
+    )
+    write_manifest(manifest, manifest_path)
+    if registry_path is not None:
+        append_registry(manifest, registry_path, manifest_path)
+
+    return {
+        "run_id": run_id,
+        "manifest_path": str(manifest_path),
+        "duration_sec": duration,
+        "verdict": verdict,
     }
