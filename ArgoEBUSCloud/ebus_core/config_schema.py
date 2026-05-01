@@ -10,8 +10,10 @@ Schema is versioned via the `schema_version: int` field. Bumping requires
 a documented migration in configs/README.md.
 """
 import datetime as dt
-from typing import Literal, Optional, Tuple
+from pathlib import Path
+from typing import Literal, Optional, Tuple, Union
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ebus_core.ae_utils import get_ebus_registry
@@ -509,3 +511,26 @@ class AnalysisConfig(BaseModel):
                 f"date_start ({self.date_start}) must be before date_end ({self.date_end})"
             )
         return self
+
+
+def load_config(path: Union[str, Path]) -> Union[IngestionConfig, AnalysisConfig]:
+    # Parse a YAML config file and return the matching validated Pydantic model.
+    # Dispatches on the top-level config_kind field ('ingestion' or 'analysis').
+    # Input: path — filesystem path to a .yaml config file
+    # Output: IngestionConfig or AnalysisConfig with all fields validated.
+    # Raises: ValueError if the file is not a YAML mapping, or config_kind is missing/unknown.
+    # Raises: pydantic.ValidationError if any field fails schema validation.
+    path = Path(path)
+    with path.open("r") as f:
+        data = yaml.safe_load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: top-level YAML must be a mapping, got {type(data)}")
+    kind = data.get("config_kind")
+    if kind == "ingestion":
+        return IngestionConfig(**data)
+    if kind == "analysis":
+        return AnalysisConfig(**data)
+    raise ValueError(
+        f"{path}: missing or unknown config_kind (got {kind!r}); "
+        f"expected 'ingestion' or 'analysis'"
+    )

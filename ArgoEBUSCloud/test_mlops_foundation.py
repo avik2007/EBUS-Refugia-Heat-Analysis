@@ -241,3 +241,36 @@ def test_gpr_gibbs_auto_instantiates_kernel_block():
     assert g.kernel_gibbs.l_form == "sigmoid_dist_to_coast"
     assert g.kernel_matern05 is None
     assert g.kernel_rbf is None
+
+
+import textwrap
+
+from ebus_core.config_schema import load_config
+
+
+def test_load_config_dispatches_by_kind(tmp_path):
+    # load_config must parse a YAML file and return the correct pydantic model type.
+    p = tmp_path / "ingest.yaml"
+    p.write_text(textwrap.dedent("""\
+        schema_version: 1
+        config_kind: ingestion
+        region: californiav2
+        date_start: "2015-01-01"
+        date_end:   "2015-12-31"
+        lat_step: 0.5
+        lon_step: 0.5
+        time_step: 10.0
+        depth_range: [0, 100]
+    """))
+    cfg = load_config(p)
+    assert isinstance(cfg, IngestionConfig)
+    assert cfg.region == "californiav2"
+
+
+def test_load_config_rejects_missing_kind(tmp_path):
+    # load_config must raise ValueError when config_kind is absent.
+    p = tmp_path / "bad.yaml"
+    p.write_text("schema_version: 1\nregion: californiav2\n")
+    with pytest.raises(ValueError) as excinfo:
+        load_config(p)
+    assert "config_kind" in str(excinfo.value)
