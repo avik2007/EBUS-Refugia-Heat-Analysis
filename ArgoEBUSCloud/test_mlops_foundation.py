@@ -700,3 +700,47 @@ def test_cli_analyze_collision_aborts(tmp_path):
     )
     assert proc.returncode == 3, (proc.stdout, proc.stderr)
     assert "collision" in (proc.stdout + proc.stderr).lower()
+
+
+def test_cli_list_filters_by_region(tmp_path):
+    reg = tmp_path / "registry.jsonl"
+    reg.write_text(
+        _json.dumps({"run_id": "a1", "kind": "analysis", "config_hash": "h1",
+                     "created_at": "t1", "region": "californiav2",
+                     "depth_range": [0, 100], "manifest_path": "/x/m.json"}) + "\n" +
+        _json.dumps({"run_id": "b2", "kind": "analysis", "config_hash": "h2",
+                     "created_at": "t2", "region": "humboldt",
+                     "depth_range": [0, 100], "manifest_path": "/y/m.json"}) + "\n"
+    )
+    proc = _subprocess.run(
+        ["python", "ArgoEBUSCloud/aebus_cli.py", "list",
+         "--registry", str(reg), "--region", "californiav2"],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "a1" in proc.stdout
+    assert "b2" not in proc.stdout
+
+
+def test_cli_show_prints_manifest_json(tmp_path):
+    m = {"schema_version": 1, "kind": "analysis", "run_id": "z9",
+         "config_hash": "h", "created_at": "t",
+         "duration_sec": 1.0, "config": {}, "code": {}, "env": {},
+         "inputs": {}, "outputs": {}, "host": {}}
+    aelogs = tmp_path / "aelogs" / "z9"
+    aelogs.mkdir(parents=True)
+    (aelogs / "manifest.json").write_text(_json.dumps(m))
+    reg = tmp_path / "registry.jsonl"
+    reg.write_text(_json.dumps({
+        "run_id": "z9", "kind": "analysis", "config_hash": "h",
+        "created_at": "t", "region": None, "depth_range": None,
+        "manifest_path": str(aelogs / "manifest.json"),
+    }) + "\n")
+    proc = _subprocess.run(
+        ["python", "ArgoEBUSCloud/aebus_cli.py", "show", "z9",
+         "--registry", str(reg)],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    parsed = _json.loads(proc.stdout)
+    assert parsed["run_id"] == "z9"

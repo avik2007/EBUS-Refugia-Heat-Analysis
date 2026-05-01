@@ -93,6 +93,59 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list(args: argparse.Namespace) -> int:
+    """Read the registry and print a filtered table of past runs."""
+    if not args.registry.exists():
+        print(f"(no registry at {args.registry})")
+        return 0
+    rows = []
+    with args.registry.open("r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            if args.region and row.get("region") != args.region:
+                continue
+            if args.kind and row.get("kind") != args.kind:
+                continue
+            rows.append(row)
+    if not rows:
+        print("(no matching runs)")
+        return 0
+    cols = ("created_at", "kind", "region", "depth_range", "run_id")
+    widths = {c: max(len(c), max((len(str(r.get(c, ""))) for r in rows), default=0)) for c in cols}
+    header = "  ".join(c.ljust(widths[c]) for c in cols)
+    print(header)
+    print("-" * len(header))
+    for r in rows:
+        print("  ".join(str(r.get(c, "")).ljust(widths[c]) for c in cols))
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    """Look up a run_id in the registry and print its manifest.json."""
+    if not args.registry.exists():
+        print(f"ERROR: no registry at {args.registry}", file=sys.stderr)
+        return 1
+    target = None
+    with args.registry.open("r") as f:
+        for line in f:
+            row = json.loads(line)
+            if row.get("run_id") == args.run_id:
+                target = row
+                break
+    if target is None:
+        print(f"ERROR: run_id {args.run_id!r} not in registry", file=sys.stderr)
+        return 1
+    manifest_path = Path(target["manifest_path"])
+    if not manifest_path.exists():
+        print(f"ERROR: registry points to missing manifest {manifest_path}", file=sys.stderr)
+        return 1
+    print(manifest_path.read_text())
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="aebus", description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -112,6 +165,17 @@ def main(argv: list[str] | None = None) -> int:
     p_ing.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
     p_ing.add_argument("--force-overwrite", action="store_true")
     p_ing.set_defaults(func=cmd_ingest)
+
+    p_list = sub.add_parser("list", help="list runs from the registry")
+    p_list.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    p_list.add_argument("--region", default=None)
+    p_list.add_argument("--kind", default=None, choices=["analysis", "ingestion"])
+    p_list.set_defaults(func=cmd_list)
+
+    p_show = sub.add_parser("show", help="print the manifest.json for a run_id")
+    p_show.add_argument("run_id")
+    p_show.add_argument("--registry", type=Path, default=DEFAULT_REGISTRY)
+    p_show.set_defaults(func=cmd_show)
 
     args = parser.parse_args(argv)
     return args.func(args)
