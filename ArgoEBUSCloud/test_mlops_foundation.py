@@ -471,3 +471,52 @@ def test_derive_run_id_for_ingestion():
     assert rid == (
         "californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400"
     )
+
+
+import datetime as _dt_mod  # avoid shadowing dt alias already in scope
+
+from ebus_core.runner import build_manifest
+
+
+def test_build_manifest_has_all_required_top_keys():
+    cfg = AnalysisConfig(**_valid_analysis_kwargs())
+    m = build_manifest(
+        cfg,
+        outputs={
+            "aelogs_dir": "/tmp/aelogs/run",
+            "audit_csv": "/tmp/aelogs/run/audit.csv",
+            "snapshots_dir": "/tmp/aeplots/snap",
+        },
+        inputs_extra={"parquet_etag": "etag1", "parquet_size_bytes": 12345},
+        duration_sec=3.21,
+        conda_list_dest=None,
+    )
+    required = {
+        "schema_version", "kind", "run_id", "config_hash", "created_at",
+        "duration_sec", "config", "code", "env", "inputs", "outputs", "host",
+    }
+    assert required <= set(m.keys())
+    assert m["kind"] == "analysis"
+    assert m["duration_sec"] == 3.21
+    assert m["inputs"]["s3_path"].startswith("s3://")
+    assert m["inputs"]["parquet_etag"] == "etag1"
+
+
+def test_manifest_includes_erddap_lineage_and_teos10():
+    """§A.4: manifest inputs must carry ERDDAP lineage fields."""
+    cfg = AnalysisConfig(**_valid_analysis_kwargs())
+    m = build_manifest(
+        cfg,
+        outputs={"aelogs_dir": "/tmp/x"},
+        inputs_extra={
+            "erddap_dataset_id": "ArgoFloats",
+            "erddap_server_url": "https://coastwatch.pfeg.noaa.gov/erddap/",
+            "data_access_timestamp": "2026-04-30T00:00:00Z",
+        },
+        duration_sec=1.0,
+        conda_list_dest=None,
+    )
+    assert m["inputs"]["erddap_dataset_id"] == "ArgoFloats"
+    assert m["inputs"]["erddap_server_url"].startswith("https://")
+    assert m["inputs"]["data_access_timestamp"] == "2026-04-30T00:00:00Z"
+    assert m["env"]["teos10_convention"] == "gsw-3.x"

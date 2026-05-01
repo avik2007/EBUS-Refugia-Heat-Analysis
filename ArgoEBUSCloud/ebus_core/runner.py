@@ -9,9 +9,14 @@ analysis) with a uniform interface that:
 - captures wall-clock duration
 - writes a manifest.json + appends to the JSONL registry
 """
-from typing import Union
+import datetime as _dt
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 from ebus_core.config_schema import AnalysisConfig, IngestionConfig
+from ebus_core.manifest import (
+    canonical_config_dict, capture_code, capture_env, capture_host, config_hash,
+)
 
 
 def derive_run_id(cfg: Union[IngestionConfig, AnalysisConfig]) -> str:
@@ -90,3 +95,65 @@ def _fmt_dec(x: float) -> str:
     if "." not in s:
         s = s + ".0"
     return s.replace(".", "_")
+
+
+def build_manifest(
+    cfg: Union[IngestionConfig, AnalysisConfig],
+    outputs: Dict[str, Any],
+    inputs_extra: Dict[str, Any],
+    duration_sec: float,
+    conda_list_dest: Optional[Path],
+    cwd: Optional[Path] = None,
+) -> Dict[str, Any]:
+    """
+    Assemble a complete manifest dict from a validated config + execution metadata.
+
+    WHY: Pure function — no IO besides read-only subprocess calls in capture_*.
+    Separating assembly from writing lets tests verify manifest structure without
+    touching the filesystem.
+
+    INPUTS:
+      cfg            — validated pipeline config (IngestionConfig or AnalysisConfig)
+      outputs        — dict of output paths produced by the run (caller fills this)
+      inputs_extra   — caller-supplied provenance: parquet_etag, erddap lineage, etc.
+      duration_sec   — wall-clock seconds for the pipeline run
+      conda_list_dest— where to save conda list output (None = skip)
+      cwd            — working directory for git capture (None = cwd of process)
+
+    OUTPUT: dict ready to serialize as manifest.json (all keys defined in §A.4 spec)
+    """
+    kind = "ingestion" if isinstance(cfg, IngestionConfig) else "analysis"
+
+    # Build inputs block. Analysis carries the S3 parquet pointer + any caller
+    # extras (etag, erddap lineage). Ingestion has no upstream S3 input.
+    if isinstance(cfg, AnalysisConfig):
+        inputs: Dict[str, Any] = {
+            "source": cfg.input.source,
+            "s3_path": cfg.input.s3_path,
+            "ingestion_run_id": cfg.input.ingestion_run_id,
+            **inputs_extra,
+        }
+    else:
+        inputs = {"source": "erddap", **inputs_extra}
+
+    env_block = capture_env(
+        conda_env_name="ebus-cloud-env",
+        conda_list_dest=conda_list_dest,
+    )
+    # §A.4: teos10_convention must appear in env block for reproducibility
+    env_block["teos10_convention"] = "gsw-3.x"
+
+    return {
+        "schema_version": 1,
+        "kind": kind,
+        "run_id": derive_run_id(cfg),
+        "config_hash": config_hash(cfg),
+        "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        "duration_sec": duration_sec,
+        "config": canonical_config_dict(cfg),
+        "code": capture_code(cwd=cwd),
+        "env": env_block,
+        "inputs": inputs,
+        "outputs": outputs,
+        "host": capture_host(),
+    }
