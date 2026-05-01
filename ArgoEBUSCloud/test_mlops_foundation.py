@@ -613,3 +613,38 @@ def test_run_ingestion_dispatches(tmp_path, monkeypatch):
     assert captured["depth_range"] == (0, 100)
     assert (aelogs_root / result["run_id"] / "manifest.json").exists()
     assert (tmp_path / "registry.jsonl").exists()
+
+
+import subprocess as _subprocess
+
+
+def test_cli_validate_prints_run_id(tmp_path):
+    cfg_path = tmp_path / "ingest.yaml"
+    cfg_path.write_text(textwrap.dedent("""\
+        schema_version: 1
+        config_kind: ingestion
+        region: californiav2
+        date_start: "2015-01-01"
+        date_end:   "2015-12-31"
+        lat_step: 0.5
+        lon_step: 0.5
+        time_step: 10.0
+        depth_range: [0, 100]
+    """))
+    proc = _subprocess.run(
+        ["python", "ArgoEBUSCloud/aebus_cli.py", "validate", str(cfg_path)],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100" in proc.stdout
+
+
+def test_cli_validate_bad_yaml_exits_2(tmp_path):
+    cfg_path = tmp_path / "bad.yaml"
+    cfg_path.write_text("schema_version: 1\nconfig_kind: ingestion\nregion: atlantis\n")
+    proc = _subprocess.run(
+        ["python", "ArgoEBUSCloud/aebus_cli.py", "validate", str(cfg_path)],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 2
+    assert "atlantis" in proc.stderr or "atlantis" in proc.stdout
