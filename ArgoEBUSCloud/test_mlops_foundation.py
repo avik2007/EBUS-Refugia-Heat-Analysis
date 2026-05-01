@@ -330,3 +330,33 @@ def test_config_hash_is_64_char_hex():
     h = config_hash(cfg)
     assert len(h) == 64
     int(h, 16)  # raises ValueError if not valid hex
+
+
+from ebus_core.manifest import capture_code, capture_env, capture_host
+
+
+def test_capture_code_returns_required_fields():
+    # capture_code must return at minimum git_sha, git_dirty, git_branch, repo_root.
+    code = capture_code()
+    assert set(code.keys()) >= {"git_sha", "git_dirty", "git_branch", "repo_root"}
+    assert isinstance(code["git_dirty"], bool)
+    assert isinstance(code["git_sha"], str) and len(code["git_sha"]) >= 7
+
+
+def test_capture_env_includes_key_packages_and_python():
+    # capture_env must include python_version and key_packages dict with the
+    # canonical set of package names (all present in ebus-cloud-env).
+    env = capture_env(conda_env_name="ebus-cloud-env", conda_list_dest=None)
+    assert "python_version" in env
+    assert "key_packages" in env
+    assert isinstance(env["key_packages"], dict)
+    expected = {"scikit-learn", "xarray", "numpy", "pandas",
+                "gsw", "coiled", "dask", "matplotlib", "cartopy", "scipy"}
+    assert set(env["key_packages"].keys()) == expected
+
+
+def test_capture_host_returns_hostname_and_platform():
+    # capture_host must return non-empty hostname and platform strings.
+    host = capture_host()
+    assert "hostname" in host and host["hostname"]
+    assert "platform" in host and host["platform"]
