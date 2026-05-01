@@ -97,7 +97,7 @@ class IngestionConfig(BaseModel):
         # like california, californiav2, californiav3, humboldt, canary, benguela.
         # Input: region name string (e.g., "california" or "atlantis")
         # Output: validated region name, or raises ValueError if not found.
-        # Raises: ValueError if region not in registry.
+        # Raises: pydantic.ValidationError (wraps the ValueError) if region not in registry.
         registry = get_ebus_registry()
         if v not in registry:
             raise ValueError(
@@ -114,7 +114,7 @@ class IngestionConfig(BaseModel):
         # well-defined for kriging/analysis.
         # Input: tuple of (top_depth, bottom_depth) in meters
         # Output: validated depth tuple, or raises ValueError if invalid.
-        # Raises: ValueError if top < 0 or top >= bottom.
+        # Raises: pydantic.ValidationError (wraps the ValueError) if top < 0 or top >= bottom.
         top, bottom = v
         if top < 0 or bottom <= top:
             raise ValueError(
@@ -129,7 +129,7 @@ class IngestionConfig(BaseModel):
         # depends on comparing two fields.
         # Input: IngestionConfig instance with date_start and date_end
         # Output: validated self, or raises ValueError if dates are invalid.
-        # Raises: ValueError if date_start >= date_end.
+        # Raises: pydantic.ValidationError (wraps the ValueError) if date_start >= date_end.
         if self.date_start >= self.date_end:
             raise ValueError(
                 f"date_start ({self.date_start}) must be before date_end ({self.date_end})"
