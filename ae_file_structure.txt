@@ -43,7 +43,31 @@ ArgoEBUSAnalysis/
 │   │                                      #   Output: aelogs/{run_id}_3dmatern_w45/
 │   │                                      #   Result: 19/23 pass (83%), median RMSRE 3.86%
 │   │
-│   ├── 09_ae_longterm_float_census.py    # Float density census across broad California
+│   ├── 10_ae_backfill_configs.py         # Backfills legacy AEResults/aelogs/ runs into
+   │                                      #   configs/<region>/ YAML files. Walks every
+   │                                      #   aelogs dir, parses run_id, reconstructs an
+   │                                      #   AnalysisConfig, and writes YAML with
+   │                                      #   legacy_backfill=true. Unrecoverable fields
+   │                                      #   (noise_val, ls_bounds) written as null.
+   │                                      #   Output: configs/california/ + configs/californiav2/
+   │
+   ├── aebus_cli.py                       # Config-driven CLI (aebus). Subcommands:
+   │                                      #   validate — schema-check + print run_id
+   │                                      #   analyze  — dispatch AnalysisConfig end-to-end
+   │                                      #   ingest   — dispatch IngestionConfig end-to-end
+   │                                      #   list     — tabulate runs from run_registry.jsonl
+   │                                      #   show     — print manifest.json for a run_id
+   │                                      #   Exit codes: 0=ok, 2=bad config, 3=collision.
+   │
+   ├── test_mlops_foundation.py           # 44-test unit suite for the MLOps foundation layer.
+   │                                      #   Covers: config_schema (valid + invalid configs,
+   │                                      #   cross-field validators, legacy_backfill rules),
+   │                                      #   manifest (hash, provenance, collision detect,
+   │                                      #   registry append), runner (run_id derivation,
+   │                                      #   dispatch dispatch), CLI subcommands.
+   │                                      #   Run: pytest ArgoEBUSCloud/test_mlops_foundation.py
+   │
+   ├── 09_ae_longterm_float_census.py    # Float density census across broad California
 │   │                                      #   domain (lat [25,50], lon [-140,-110]) for
 │   │                                      #   1999–2025. Fetches via ERDDAP in 5-year
 │   │                                      #   chunks, bins on 5°×5° grid (unique floats),
@@ -82,7 +106,37 @@ ArgoEBUSAnalysis/
 │       │                                  #   Auto-tunes correlation lengths via K-Fold or
 │       │                                  #   Leave-One-Float-Out cross-validation.
 │       │
-│       └── argoebus_plotting.py           # Visualization functions. Generates Cartopy maps
+│       ├── config_schema.py               # Pydantic models for pipeline configs (schema_version 1).
+       │                                  #   AnalysisConfig: region, date range, resolution,
+       │                                  #   depth range, GPR hyperparams, run_suffix.
+       │                                  #   IngestionConfig: same plus CloudBlock, S3Block,
+       │                                  #   QCPolicyBlock. Both reject unknown fields and run
+       │                                  #   cross-field validators (bin-aliasing, bounds checks).
+       │                                  #   legacy_backfill=true skips completeness checks on
+       │                                  #   null GPR fields. load_config() auto-selects model.
+       │
+       ├── manifest.py                    # Manifest capture + collision detection + registry.
+       │                                  #   canonical_config_dict() hashes the config for
+       │                                  #   run identity. build_manifest() captures git SHA,
+       │                                  #   conda env, host, and timing. check_collision()
+       │                                  #   detects hash mismatches vs. existing manifests.
+       │                                  #   append_registry() writes to run_registry.jsonl.
+       │
+       ├── runner.py                      # Dispatch wrappers for analysis + ingestion.
+       │                                  #   run_analysis(cfg) → calls existing validate_moving_window*
+       │                                  #   run_ingestion(cfg) → calls run_ingestion_pipeline()
+       │                                  #   Both derive run_id, check collision, write manifest.
+       │                                  #   derive_run_id() reproduces the canonical naming scheme
+       │                                  #   used by existing AEResults/aelogs/ directories.
+       │
+       ├── backfill.py                    # Backfill logic for legacy analysis runs.
+       │                                  #   _parse_run_id() decomposes a canonical run_id string.
+       │                                  #   reconstruct_analysis_config() builds an AnalysisConfig
+       │                                  #   YAML from the parsed fields; noise_val and ls_bounds
+       │                                  #   are written as null with legacy_backfill=true.
+       │                                  #   Called by 10_ae_backfill_configs.py.
+       │
+       └── argoebus_plotting.py           # Visualization functions. Generates Cartopy maps
 │                                          #   of kriging predictions + uncertainty, and
 │                                          #   physics history plots over time.
 │
@@ -128,6 +182,13 @@ ArgoEBUSAnalysis/
 │       ├── {run_id}_3d_matern05/         # Script 04 Run B: 3D Matern(nu=0.5) results.
 │       ├── {run_id}_3d_m05_*/            # Script 05 optimization variants (C1–C4).
 │       └── {run_id}_3dmatern_w45/        # Script 05b canonical output (C2 config, 83% pass).
+│
+├── configs/                               # YAML run configs (schema_version 1). One file per
+│   │                                      #   distinct pipeline run. See configs/README.md.
+│   ├── README.md                          # Schema field reference, versioning, backfill conventions.
+│   ├── california/                        # 15 configs for the california region (2015, t30).
+│   │   └── <region>_<dates>_<params>.yaml #   Naming matches AEResults/aelogs/ run_id exactly.
+│   └── californiav2/                      # 3 configs for californiav2 (2015, t10 FX2 run).
 │
 ├── CCS_OHC_Deep_GSW.csv                   # Processed OHC result: deep layer (500-1000m)
 │                                          #   for California Current System.

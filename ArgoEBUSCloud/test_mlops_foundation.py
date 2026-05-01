@@ -744,3 +744,120 @@ def test_cli_show_prints_manifest_json(tmp_path):
     assert proc.returncode == 0, proc.stderr
     parsed = _json.loads(proc.stdout)
     assert parsed["run_id"] == "z9"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: legacy_backfill schema + backfill script round-trip
+# ---------------------------------------------------------------------------
+
+import csv
+import os
+
+from ebus_core.config_schema import load_config
+from ebus_core.runner import derive_run_id
+
+
+def test_legacy_backfill_marker_permits_null_provenance():
+    # When legacy_backfill=True, noise_val and all three gpr bound fields may be
+    # null — they are forensic records of pre-manifest runs where these inputs
+    # cannot be recovered. The schema must accept null and NOT fill in defaults.
+    cfg = AnalysisConfig(
+        schema_version=1,
+        config_kind="analysis",
+        legacy_backfill=True,
+        input={"source": "s3", "s3_path": "s3://b/k.parquet"},
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1),
+        date_end=dt.date(2015, 12, 31),
+        lat_step=0.5,
+        lon_step=0.5,
+        time_step=10.0,
+        depth_range=(150, 400),
+        gpr={
+            "mode": "3D",
+            "kernel_type": "matern0.5",
+            "window_size_days": 45,
+            "step_size_days": 10,
+            "noise_val": None,
+            "time_ls_bounds_days": None,
+            "lat_ls_bounds": None,
+            "lon_ls_bounds": None,
+            "run_suffix": "_3dmatern_w45",
+        },
+        description="backfilled",
+    )
+    # All unrecoverable fields are null — not silently defaulted.
+    assert cfg.legacy_backfill is True
+    assert cfg.gpr.noise_val is None
+    assert cfg.gpr.time_ls_bounds_days is None
+    assert cfg.gpr.lat_ls_bounds is None
+    assert cfg.gpr.lon_ls_bounds is None
+
+
+def test_non_legacy_config_requires_gpr_bounds():
+    # When legacy_backfill=False (the default), null gpr bounds must raise
+    # ValidationError — real run configs must be fully specified.
+    with pytest.raises(ValidationError):
+        AnalysisConfig(
+            schema_version=1,
+            config_kind="analysis",
+            input={"source": "s3", "s3_path": "s3://b/k.parquet"},
+            region="californiav2",
+            date_start=dt.date(2015, 1, 1),
+            date_end=dt.date(2015, 12, 31),
+            lat_step=0.5,
+            lon_step=0.5,
+            time_step=10.0,
+            depth_range=(150, 400),
+            gpr={
+                "mode": "3D",
+                "kernel_type": "matern0.5",
+                "window_size_days": 45,
+                "step_size_days": 10,
+                "noise_val": None,
+                "time_ls_bounds_days": None,
+                "lat_ls_bounds": None,
+                "lon_ls_bounds": None,
+            },
+        )
+
+
+def test_backfilled_configs_round_trip(tmp_path):
+    # backfill_configs must write a YAML per aelog dir such that load_config
+    # parses it cleanly and derive_run_id(cfg) reproduces the original dir name.
+    # Fixture: one canonical 3D-matern Source-layer run dir with a minimal audit CSV.
+    from ebus_core.backfill import backfill_configs
+
+    run_id = "californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45"
+    aelog_dir = tmp_path / "aelogs" / run_id
+    aelog_dir.mkdir(parents=True)
+    # Minimal audit CSV — two windows with different noise_val values.
+    audit_csv = aelog_dir / f"audit_{run_id}.csv"
+    audit_csv.write_text(
+        "window_start,window_center,rmsre,std_z,noise_val,n_bins,n_floats,"
+        "scale_lat_bin,scale_lon_bin,scale_time_bin,anisotropy_ratio\n"
+        "5820.0,5842.5,0.034,0.73,0.000215,198,73,26.4,34.6,45.0,0.76\n"
+        "5835.0,5857.5,0.020,0.88,0.000153,148,72,30.5,33.5,43.6,0.91\n"
+    )
+
+    configs_root = tmp_path / "configs"
+    backfill_configs(
+        aelogs_root=tmp_path / "aelogs",
+        configs_root=configs_root,
+        today="2026-04-30",
+    )
+
+    # Exactly one YAML written under configs/californiav2/
+    written = list((configs_root / "californiav2").glob("*.yaml"))
+    assert len(written) == 1
+
+    cfg = load_config(written[0])
+    # run_id derived from config must match the original aelog dir name exactly.
+    assert derive_run_id(cfg) == run_id
+    # legacy_backfill marker must be set.
+    assert cfg.legacy_backfill is True
+    # per-window noise values recorded, not collapsed to a single float.
+    assert cfg.gpr.noise_vals_audit == [0.000215, 0.000153]
+    # unrecoverable bounds are null.
+    assert cfg.gpr.noise_val is None
+    assert cfg.gpr.time_ls_bounds_days is None

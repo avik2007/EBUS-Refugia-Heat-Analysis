@@ -11,7 +11,7 @@ a documented migration in configs/README.md.
 """
 import datetime as dt
 from pathlib import Path
-from typing import Literal, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -88,6 +88,10 @@ class IngestionConfig(BaseModel):
     cloud: CloudBlock = Field(default_factory=CloudBlock)
     s3: S3Block = Field(default_factory=S3Block)
     qc_policy: QCPolicyBlock = Field(default_factory=QCPolicyBlock)
+
+    # legacy_backfill: marks configs reconstructed from pre-manifest runs.
+    # When True, unrecoverable fields may be null. Not used at runtime.
+    legacy_backfill: bool = False
 
     description: str = ""
 
@@ -229,18 +233,28 @@ class GPRBlock(BaseModel):
 
     # min_bins: minimum occupied spatial bins required to attempt a GPR fit
     min_bins: int = Field(10, ge=1)
-    # noise_val: observation noise variance added to the diagonal (Tikhonov reg)
-    noise_val: float = Field(0.1, gt=0)
+    # noise_val: observation noise variance added to the diagonal (Tikhonov reg).
+    # Optional so legacy backfill can record null when the input value is unrecoverable.
+    noise_val: Optional[float] = Field(default=0.1)
 
     # time_ls_bounds_days: (lower, upper) optimisation bounds for the temporal
     # lengthscale in days. Lower must be >= time_step (bin-aliasing guard in AnalysisConfig).
-    time_ls_bounds_days: Tuple[float, float] = (15.0, 45.0)
+    # Optional so legacy backfill can record null when unrecoverable.
+    time_ls_bounds_days: Optional[Tuple[float, float]] = (15.0, 45.0)
 
     # §A.2: split anisotropy — lat and lon have separate lengthscale bounds.
     # lat_ls_bounds: (lower, upper) in degrees latitude for the lat lengthscale
-    lat_ls_bounds: Tuple[float, float] = (1.0e-2, 10.0)
+    # Optional so legacy backfill can record null when unrecoverable.
+    lat_ls_bounds: Optional[Tuple[float, float]] = (1.0e-2, 10.0)
     # lon_ls_bounds: (lower, upper) in degrees longitude for the lon lengthscale
-    lon_ls_bounds: Tuple[float, float] = (1.0e-2, 5.0)
+    # Optional so legacy backfill can record null when unrecoverable.
+    lon_ls_bounds: Optional[Tuple[float, float]] = (1.0e-2, 5.0)
+
+    # noise_vals_audit: per-window optimized noise values read from the audit CSV.
+    # Only populated by the legacy backfill script — not used at runtime.
+    # Records the empirical noise distribution for forensic review without
+    # implying that any one value was the regularization input.
+    noise_vals_audit: Optional[List[float]] = None
 
     # run_suffix: appended to the output run_id for human-readable labelling
     run_suffix: str = ""
@@ -250,15 +264,30 @@ class GPRBlock(BaseModel):
     kernel_matern05: Optional[KernelMatern05Block] = None
     kernel_gibbs: Optional[KernelGibbsBlock] = None
 
-    @field_validator("lat_ls_bounds", "lon_ls_bounds")
+    @field_validator("noise_val")
     @classmethod
-    def _ls_bounds_ordered(cls, v: Tuple[float, float]) -> Tuple[float, float]:
+    def _noise_val_positive(cls, v: Optional[float]) -> Optional[float]:
+        # Validate noise_val > 0 when provided. Null is permitted for legacy backfill
+        # configs where the original regularization input cannot be recovered.
+        # Input: float noise value or None
+        # Output: validated value unchanged.
+        # Raises: pydantic.ValidationError if v is not None and v <= 0.
+        if v is not None and v <= 0:
+            raise ValueError(f"noise_val must be > 0; got {v}")
+        return v
+
+    @field_validator("lat_ls_bounds", "lon_ls_bounds", "time_ls_bounds_days")
+    @classmethod
+    def _ls_bounds_ordered(cls, v: Optional[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
         # Validate that the (lower, upper) lengthscale bounds satisfy 0 < lower < upper.
         # Physical requirement: lengthscales must be strictly positive, and the
         # optimisation search interval must be non-degenerate.
-        # Input: tuple (lower, upper) as floats in physical units (degrees or days)
-        # Output: validated tuple unchanged.
+        # Null is permitted for legacy backfill configs (unrecoverable fields).
+        # Input: tuple (lower, upper) as floats in physical units (degrees or days), or None
+        # Output: validated tuple unchanged, or None.
         # Raises: pydantic.ValidationError (wraps ValueError) if constraint violated.
+        if v is None:
+            return v
         lo, hi = v
         if lo <= 0 or lo >= hi:
             raise ValueError(f"ls_bounds must satisfy 0 < lower < upper; got {v}")
@@ -443,6 +472,11 @@ class AnalysisConfig(BaseModel):
     # physics_params: OHC integration constants and QC thresholds (§A.3)
     physics_params: PhysicsParamsBlock = Field(default_factory=PhysicsParamsBlock)
 
+    # legacy_backfill: marks configs reconstructed from pre-manifest runs.
+    # When True, gpr.noise_val, gpr.time_ls_bounds_days, gpr.lat_ls_bounds, and
+    # gpr.lon_ls_bounds may be null. The bin-aliasing time_ls check is also skipped.
+    legacy_backfill: bool = False
+
     description: str = ""
 
     @field_validator("region")
@@ -484,19 +518,50 @@ class AnalysisConfig(BaseModel):
         # profiles, yielding duplicate GPR fits and inflated temporal coverage.
         # Similarly, time_ls_bounds_days[0] < time_step means the optimiser can
         # produce a temporal lengthscale shorter than one bin — physically meaningless.
+        # The time_ls check is skipped for legacy backfill configs where
+        # time_ls_bounds_days is null (unrecoverable from pre-manifest run).
         # Input: AnalysisConfig after all fields and GPRBlock have been validated.
         # Output: self unchanged if both checks pass.
         # Raises: pydantic.ValidationError (wraps ValueError) on any violated rule.
-        if self.gpr.step_size_days < self.time_step:
-            raise ValueError(
-                f"step_size_days ({self.gpr.step_size_days}) must be >= "
-                f"time_step ({self.time_step}) to prevent bin aliasing."
-            )
-        if self.gpr.time_ls_bounds_days[0] < self.time_step:
-            raise ValueError(
-                f"time_ls_bounds_days lower ({self.gpr.time_ls_bounds_days[0]}) "
-                f"must be >= time_step ({self.time_step})."
-            )
+        # Legacy backfill configs may record experimental step values that violate
+        # the aliasing rule (e.g. t1s10 had step=10 with time_step=30 deliberately).
+        # Both checks are skipped for legacy configs — the runs already happened.
+        if not self.legacy_backfill:
+            if self.gpr.step_size_days < self.time_step:
+                raise ValueError(
+                    f"step_size_days ({self.gpr.step_size_days}) must be >= "
+                    f"time_step ({self.time_step}) to prevent bin aliasing."
+                )
+            if self.gpr.time_ls_bounds_days is not None:
+                if self.gpr.time_ls_bounds_days[0] < self.time_step:
+                    raise ValueError(
+                        f"time_ls_bounds_days lower ({self.gpr.time_ls_bounds_days[0]}) "
+                        f"must be >= time_step ({self.time_step})."
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def _non_legacy_complete(self) -> "AnalysisConfig":
+        # Enforce that non-legacy configs specify all GPR provenance fields.
+        # Legacy backfill configs may have null for fields that cannot be
+        # recovered from pre-manifest run_id or audit CSV.
+        # Input: AnalysisConfig after all fields and GPRBlock have been validated.
+        # Output: self unchanged if valid.
+        # Raises: pydantic.ValidationError (wraps ValueError) if any required GPR
+        #         bound field is null on a non-legacy config.
+        if not self.legacy_backfill:
+            missing = []
+            if self.gpr.noise_val is None:
+                missing.append("gpr.noise_val")
+            if self.gpr.lat_ls_bounds is None:
+                missing.append("gpr.lat_ls_bounds")
+            if self.gpr.lon_ls_bounds is None:
+                missing.append("gpr.lon_ls_bounds")
+            if missing:
+                raise ValueError(
+                    f"Fields required when legacy_backfill=False: {missing}. "
+                    f"Set legacy_backfill=True for backfilled configs."
+                )
         return self
 
     @model_validator(mode="after")

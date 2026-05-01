@@ -13,6 +13,22 @@ Signal: Source Layer warming faster than Background.
 
 ---
 
+## Config-Driven Workflow (Preferred Entry Point)
+
+New pipeline runs should be driven by YAML configs in `configs/<region>/`, not by editing scripts directly.
+
+**Preferred sequence for any new run:**
+1. Create or copy a YAML config in `configs/<region>/`.
+2. Validate: `conda run -n ebus-cloud-env python ArgoEBUSCloud/aebus_cli.py validate <config.yaml>`
+3. Dispatch: `aebus_cli.py analyze <config.yaml>` or `aebus_cli.py ingest <config.yaml>`
+4. Inspect: `aebus_cli.py list --region <region>` / `aebus_cli.py show <run_id>`
+
+**Escape hatch:** the underlying scripts (`02_ae_cloud_run.py`, `05_ae_update_tomatern0.5.py`, `07_ae_deeper_layers.py`) still work directly for one-off exploration. Do not delete or refactor them — they are the canonical pipeline implementations that the runner layer delegates to.
+
+**Config schema:** `ArgoEBUSCloud/ebus_core/config_schema.py` (Pydantic, `schema_version: 1`). See `configs/README.md` for field reference and backfill conventions.
+
+---
+
 ## Workflow Principles
 
 1. **Plan mode** for any task with 3+ steps or architectural decisions. Re-plan if derailed.

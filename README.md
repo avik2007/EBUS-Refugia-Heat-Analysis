@@ -18,6 +18,38 @@ This repository contains the data pipeline, statistical modeling framework, and 
 
 ---
 
+## MLOps Tooling
+
+This project includes a config-driven MLOps layer that wraps the existing pipeline for reproducible, collision-safe runs.
+
+- **YAML configs** in `configs/<region>/` define every run parameter. Each config is schema-validated by Pydantic before anything executes.
+- **`aebus` CLI** dispatches validate / analyze / ingest / list / show subcommands.
+- **Manifests** capture config hash, git SHA, conda env, and S3 lineage alongside every run.
+- **Collision detection** blocks duplicate runs (same config hash, different result) and skips identical re-runs gracefully.
+
+### aebus quickstart
+
+```bash
+# Validate a config and print its canonical run_id
+conda run -n ebus-cloud-env python ArgoEBUSCloud/aebus_cli.py validate \
+    configs/california/california_20150101_20151231_res0_5x0_5_t30_0_d0_100_3dmatern_w45.yaml
+
+# List all registered runs for a region
+conda run -n ebus-cloud-env python ArgoEBUSCloud/aebus_cli.py list --region california
+
+# Show the manifest for a specific run
+conda run -n ebus-cloud-env python ArgoEBUSCloud/aebus_cli.py show \
+    california_20150101_20151231_res0_5x0_5_t30_0_d0_100_3dmatern_w45
+
+# Run analysis end-to-end (writes audit CSV + manifest)
+conda run -n ebus-cloud-env python ArgoEBUSCloud/aebus_cli.py analyze \
+    configs/california/california_20150101_20151231_res0_5x0_5_t30_0_d0_100_3dmatern_w45.yaml
+```
+
+The underlying scripts (`02_ae_cloud_run.py`, `05_ae_update_tomatern0.5.py`, etc.) remain usable directly as an escape hatch for one-off exploration.
+
+---
+
 ## Example Outputs
 
 **Argo Float Tracks — California Current System (2015)**
