@@ -12,7 +12,9 @@ a documented migration in configs/README.md.
 import datetime as dt
 from typing import Literal, Tuple
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from ebus_core.ae_utils import get_ebus_registry
 
 
 class CloudBlock(BaseModel):
@@ -86,3 +88,50 @@ class IngestionConfig(BaseModel):
     qc_policy: QCPolicyBlock = Field(default_factory=QCPolicyBlock)
 
     description: str = ""
+
+    @field_validator("region")
+    @classmethod
+    def _region_in_registry(cls, v: str) -> str:
+        # Validate that region exists in the EBUS registry. Valid regions are
+        # defined in get_ebus_registry() and include coastal upwelling systems
+        # like california, californiav2, californiav3, humboldt, canary, benguela.
+        # Input: region name string (e.g., "california" or "atlantis")
+        # Output: validated region name, or raises ValueError if not found.
+        # Raises: ValueError if region not in registry.
+        registry = get_ebus_registry()
+        if v not in registry:
+            raise ValueError(
+                f"region '{v}' not in get_ebus_registry(); "
+                f"valid: {sorted(registry.keys())}"
+            )
+        return v
+
+    @field_validator("depth_range")
+    @classmethod
+    def _depth_range_ordered(cls, v: Tuple[int, int]) -> Tuple[int, int]:
+        # Validate that depth_range is a valid (top, bottom) tuple with
+        # 0 <= top < bottom. This ensures the depth layer is positive and
+        # well-defined for kriging/analysis.
+        # Input: tuple of (top_depth, bottom_depth) in meters
+        # Output: validated depth tuple, or raises ValueError if invalid.
+        # Raises: ValueError if top < 0 or top >= bottom.
+        top, bottom = v
+        if top < 0 or bottom <= top:
+            raise ValueError(
+                f"depth_range must be (top, bottom) with 0 <= top < bottom; got {v}"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _dates_ordered(self) -> "IngestionConfig":
+        # Validate that date_start < date_end to ensure the time window is
+        # positive. This is a model_validator (not field_validator) because it
+        # depends on comparing two fields.
+        # Input: IngestionConfig instance with date_start and date_end
+        # Output: validated self, or raises ValueError if dates are invalid.
+        # Raises: ValueError if date_start >= date_end.
+        if self.date_start >= self.date_end:
+            raise ValueError(
+                f"date_start ({self.date_start}) must be before date_end ({self.date_end})"
+            )
+        return self
