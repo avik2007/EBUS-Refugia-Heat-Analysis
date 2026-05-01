@@ -360,3 +360,88 @@ def test_capture_host_returns_hostname_and_platform():
     host = capture_host()
     assert "hostname" in host and host["hostname"]
     assert "platform" in host and host["platform"]
+
+
+from ebus_core.manifest import (
+    write_manifest, read_manifest, check_collision, ManifestCollisionError,
+)
+
+
+def _make_manifest_dict(hash_value="aaaaaaaa"):
+    # Helper: builds a minimal but valid manifest dict for IO + collision tests.
+    return {
+        "schema_version": 1,
+        "kind": "analysis",
+        "run_id": "test_run",
+        "config_hash": hash_value,
+        "created_at": "2026-04-25T00:00:00Z",
+        "duration_sec": 1.23,
+        "config": {"region": "californiav2"},
+        "code": {"git_sha": "abcd1234", "git_dirty": False,
+                 "git_branch": "main", "repo_root": "/repo"},
+        "env": {"conda_env_name": "ebus-cloud-env",
+                "python_version": "3.11.7",
+                "key_packages": {}},
+        "inputs": {"source": "s3", "s3_path": "s3://b/k"},
+        "outputs": {"aelogs_dir": "/tmp/x", "audit_csv": "/tmp/x/a.csv",
+                    "snapshots_dir": "/tmp/y"},
+        "host": {"hostname": "h", "platform": "p"},
+    }
+
+
+def test_manifest_roundtrip(tmp_path):
+    # write_manifest + read_manifest must produce identical dicts.
+    p = tmp_path / "manifest.json"
+    src = _make_manifest_dict()
+    write_manifest(src, p)
+    out = read_manifest(p)
+    assert out == src
+
+
+def test_check_collision_no_existing(tmp_path):
+    # No prior manifest → returns "fresh", no raise.
+    p = tmp_path / "manifest.json"
+    result = check_collision(p, new_hash="anything")
+    assert result == "fresh"
+
+
+def test_check_collision_identical_hash_warns(tmp_path):
+    # Same hash → returns "rerun", no raise (safe to re-use the run_id).
+    p = tmp_path / "manifest.json"
+    write_manifest(_make_manifest_dict(hash_value="aaaa"), p)
+    verdict = check_collision(p, new_hash="aaaa")
+    assert verdict == "rerun"
+
+
+def test_check_collision_different_hash_raises(tmp_path):
+    # Different hash → ManifestCollisionError with both hashes in message.
+    p = tmp_path / "manifest.json"
+    write_manifest(_make_manifest_dict(hash_value="aaaa"), p)
+    with pytest.raises(ManifestCollisionError) as excinfo:
+        check_collision(p, new_hash="bbbb")
+    msg = str(excinfo.value)
+    assert "aaaa" in msg and "bbbb" in msg
+
+
+import json as _json
+
+from ebus_core.manifest import append_registry
+
+
+def test_append_registry_appends_one_line(tmp_path):
+    # append_registry must write one JSONL line per call with the canonical fields.
+    reg = tmp_path / "registry.jsonl"
+    m = _make_manifest_dict()
+    m["config"]["depth_range"] = [0, 100]
+    m["config"]["region"] = "californiav2"
+    append_registry(m, reg, manifest_path=tmp_path / "manifest.json")
+    append_registry(m, reg, manifest_path=tmp_path / "manifest.json")
+    lines = reg.read_text().splitlines()
+    assert len(lines) == 2
+    parsed = _json.loads(lines[0])
+    assert set(parsed.keys()) == {
+        "run_id", "kind", "config_hash", "created_at",
+        "region", "depth_range", "manifest_path",
+    }
+    assert parsed["region"] == "californiav2"
+    assert parsed["depth_range"] == [0, 100]

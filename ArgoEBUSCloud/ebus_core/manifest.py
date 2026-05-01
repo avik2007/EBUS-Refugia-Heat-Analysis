@@ -171,3 +171,102 @@ def capture_host() -> Dict[str, Any]:
         "hostname": socket.gethostname(),
         "platform": _platform.platform(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Task 1.7: Manifest read/write + collision detector
+# ---------------------------------------------------------------------------
+
+
+class ManifestCollisionError(Exception):
+    # Raised when a run_id collides with a prior run whose config differs.
+    # The caller must either change run_suffix in the config or force-overwrite.
+    pass
+
+
+def write_manifest(manifest: Dict[str, Any], path: Path) -> None:
+    # Write a manifest dict to JSON at the given path, creating parent dirs if needed.
+    # Input: manifest — dict conforming to the manifest schema
+    # Input: path — destination file path (will be created or overwritten)
+    # Output: none (side effect: file written)
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as f:
+        json.dump(manifest, f, indent=2, sort_keys=True)
+
+
+def read_manifest(path: Path) -> Dict[str, Any]:
+    # Read and return a manifest dict from a JSON file.
+    # Input: path — path to a manifest.json file
+    # Output: parsed dict with all manifest fields
+    # Raises: FileNotFoundError if path does not exist; json.JSONDecodeError if malformed
+    with Path(path).open("r") as f:
+        return json.load(f)
+
+
+def check_collision(manifest_path: Path, new_hash: str) -> str:
+    # Compare a prospective run's config_hash against any existing manifest at the path.
+    # Returns:
+    #   'fresh' — no prior manifest exists, safe to write
+    #   'rerun' — prior manifest has identical config_hash (same config, re-running)
+    # Raises ManifestCollisionError if a prior manifest exists with a different hash —
+    # meaning the run_id is being reused with a changed config, which is not allowed.
+    # Input: manifest_path — path where the new manifest would be written
+    # Input: new_hash — config_hash of the proposed new run
+    # Output: "fresh" or "rerun"
+    # Raises: ManifestCollisionError if hashes differ
+    manifest_path = Path(manifest_path)
+    if not manifest_path.exists():
+        return "fresh"
+    prior = read_manifest(manifest_path)
+    if prior.get("config_hash") == new_hash:
+        return "rerun"
+    raise ManifestCollisionError(
+        f"run_id collision at {manifest_path.parent}/\n"
+        f"  existing manifest config_hash: {prior.get('config_hash')}\n"
+        f"  new run config_hash:           {new_hash}\n"
+        f"Configs differ. Either:\n"
+        f"  - bump run_suffix in your config (e.g., add _v2)\n"
+        f"  - OR re-run with --force-overwrite to delete prior outputs"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Task 1.8: Run registry append
+# ---------------------------------------------------------------------------
+
+# Fixed schema for the registry index line. These are the fields written per run.
+# Adding fields requires a schema_version bump on the manifest schema.
+_REGISTRY_FIELDS = (
+    "run_id", "kind", "config_hash", "created_at",
+    "region", "depth_range", "manifest_path",
+)
+
+
+def append_registry(
+    manifest: Dict[str, Any],
+    registry_path: Path,
+    manifest_path: Path,
+) -> None:
+    # Append a denormalized one-line index entry to the JSONL run registry.
+    # The registry is the cross-run query surface (region, depth_range, hash lookups).
+    # Full per-run detail still lives in the per-run manifest pointed to by manifest_path.
+    # Each call appends exactly one line; the file is created if absent.
+    # Input: manifest — full manifest dict for the completed run
+    # Input: registry_path — path to the JSONL registry file (append mode)
+    # Input: manifest_path — filesystem path to the run's manifest.json
+    # Output: none (side effect: one line appended to registry_path)
+    registry_path = Path(registry_path)
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    line = {
+        "run_id": manifest["run_id"],
+        "kind": manifest["kind"],
+        "config_hash": manifest["config_hash"],
+        "created_at": manifest["created_at"],
+        "region": manifest["config"].get("region"),
+        "depth_range": manifest["config"].get("depth_range"),
+        "manifest_path": str(manifest_path),
+    }
+    assert set(line.keys()) == set(_REGISTRY_FIELDS)
+    with registry_path.open("a") as f:
+        f.write(json.dumps(line, sort_keys=True) + "\n")
