@@ -254,3 +254,89 @@ def run_analysis(
         "duration_sec": duration,
         "verdict": verdict,
     }
+
+
+# Default manifest output root for ingestion runs. Module-level so tests can
+# monkeypatch via symbol name without touching the filesystem.
+INGESTION_AELOGS_DIR = Path("AEResults/aelogs/ingestion")
+
+
+def _call_run_ingestion(**kwargs):
+    # Thin shim around script 02's run_ingestion_pipeline seam.
+    # Tests monkeypatch this entire function; production loads the real script.
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    script_path = Path(__file__).resolve().parents[1] / "02_ae_cloud_run.py"
+    spec = importlib.util.spec_from_file_location("script_02", script_path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["script_02"] = mod
+    spec.loader.exec_module(mod)
+    if hasattr(mod, "run_ingestion_pipeline"):
+        return mod.run_ingestion_pipeline(**kwargs)
+    raise RuntimeError(
+        "02_ae_cloud_run.py must expose run_ingestion_pipeline(**kwargs); "
+        "this is the MLOps runner seam."
+    )
+
+
+def run_ingestion(
+    cfg: IngestionConfig,
+    registry_path: Optional[Path] = None,
+    force_overwrite: bool = False,
+) -> Dict[str, Any]:
+    # Execute one cloud-ingestion run end-to-end with manifest + collision detection.
+    # Mirrors run_analysis() but writes under INGESTION_AELOGS_DIR.
+    run_id = derive_run_id(cfg)
+    aelogs_dir = INGESTION_AELOGS_DIR / run_id
+    manifest_path = aelogs_dir / "manifest.json"
+    cfg_hash = config_hash(cfg)
+
+    verdict = check_collision(manifest_path, new_hash=cfg_hash)
+    if force_overwrite and aelogs_dir.exists():
+        shutil.rmtree(aelogs_dir)
+    aelogs_dir.mkdir(parents=True, exist_ok=True)
+
+    dispatch_kwargs = {
+        "region": cfg.region,
+        "lat_step": cfg.lat_step,
+        "lon_step": cfg.lon_step,
+        "time_step": cfg.time_step,
+        "depth_range": cfg.depth_range,
+        "date_start": cfg.date_start,
+        "date_end": cfg.date_end,
+        "n_workers": cfg.cloud.n_workers,
+        "worker_region": cfg.cloud.worker_region,
+        "s3_bucket": cfg.s3.bucket,
+    }
+
+    t0 = _time.time()
+    result = _call_run_ingestion(**dispatch_kwargs)
+    duration = _time.time() - t0
+
+    inputs_extra = {
+        "parquet_etag": result.get("etag"),
+        "parquet_size_bytes": result.get("size_bytes"),
+    }
+    outputs = {
+        "aelogs_dir": str(aelogs_dir),
+        "s3_path": result.get("s3_path"),
+    }
+
+    manifest = build_manifest(
+        cfg, outputs=outputs, inputs_extra=inputs_extra,
+        duration_sec=duration,
+        conda_list_dest=aelogs_dir / "conda_list.txt",
+    )
+    write_manifest(manifest, manifest_path)
+    if registry_path is not None:
+        append_registry(manifest, registry_path, manifest_path)
+
+    return {
+        "run_id": run_id,
+        "manifest_path": str(manifest_path),
+        "s3_path": result.get("s3_path"),
+        "duration_sec": duration,
+        "verdict": verdict,
+    }

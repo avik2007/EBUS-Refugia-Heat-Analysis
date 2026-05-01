@@ -583,3 +583,33 @@ def test_run_analysis_dispatches_to_existing_function(tmp_path, monkeypatch):
     assert captured_kwargs["window_size_days"] == 45
     assert (tmp_path / "aelogs" / result["run_id"] / "manifest.json").exists()
     assert (tmp_path / "registry.jsonl").exists()
+
+
+from ebus_core.runner import run_ingestion
+
+
+def test_run_ingestion_dispatches(tmp_path, monkeypatch):
+    cfg = IngestionConfig(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(0, 100),
+    )
+
+    captured = {}
+
+    def fake_ingest(**kwargs):
+        captured.update(kwargs)
+        return {"s3_path": "s3://bucket/key.parquet", "etag": "abc", "size_bytes": 100}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_ingestion", fake_ingest)
+
+    aelogs_root = tmp_path / "aelogs"
+    monkeypatch.setattr("ebus_core.runner.INGESTION_AELOGS_DIR", aelogs_root)
+
+    result = run_ingestion(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    assert captured["region"] == "californiav2"
+    assert captured["depth_range"] == (0, 100)
+    assert (aelogs_root / result["run_id"] / "manifest.json").exists()
+    assert (tmp_path / "registry.jsonl").exists()
