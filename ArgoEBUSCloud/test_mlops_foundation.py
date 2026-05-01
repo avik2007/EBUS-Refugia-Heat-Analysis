@@ -215,3 +215,29 @@ def test_physics_params_depth_ordering():
     # the model_validator must raise ValidationError.
     with pytest.raises(ValidationError):
         PhysicsParamsBlock(ohc_depth_top_m=400, ohc_depth_bot_m=150)  # top > bot
+
+
+def test_analysis_config_bad_dates_rejected():
+    # AnalysisConfig: date_start >= date_end must reject (mirrors ingestion test).
+    bad = _valid_analysis_kwargs()
+    bad["date_start"] = dt.date(2016, 1, 1)
+    bad["date_end"] = dt.date(2015, 12, 31)
+    with pytest.raises(ValidationError) as excinfo:
+        AnalysisConfig(**bad)
+    assert "date_start" in str(excinfo.value).lower() or "date_end" in str(excinfo.value).lower()
+
+
+def test_analysis_input_block_ingestion_run_requires_run_id():
+    # source=ingestion_run without ingestion_run_id must raise (untested branch).
+    from ebus_core.config_schema import AnalysisInputBlock
+    with pytest.raises(ValidationError):
+        AnalysisInputBlock(source="ingestion_run")  # ingestion_run_id=None — must reject
+
+
+def test_gpr_gibbs_auto_instantiates_kernel_block():
+    # kernel_type=gibbs with no kernel_gibbs supplied: validator must auto-fill it.
+    g = GPRBlock(kernel_type="gibbs", lat_ls_bounds=(1e-2, 10.0), lon_ls_bounds=(1e-2, 5.0))
+    assert g.kernel_gibbs is not None
+    assert g.kernel_gibbs.l_form == "sigmoid_dist_to_coast"
+    assert g.kernel_matern05 is None
+    assert g.kernel_rbf is None

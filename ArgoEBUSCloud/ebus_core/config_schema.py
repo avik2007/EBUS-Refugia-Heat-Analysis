@@ -291,9 +291,11 @@ class GPRBlock(BaseModel):
                 f"are set: {extra_set}"
             )
 
-        # Auto-instantiate the active block if the user omitted it
+        # Auto-instantiate the active block if the user omitted it.
+        # Use setattr (not object.__setattr__) on non-frozen models so Pydantic's
+        # own __setattr__ runs and any future post-assignment validators are honoured.
         if getattr(self, active_attr) is None:
-            object.__setattr__(self, active_attr, active_cls())
+            setattr(self, active_attr, active_cls())
         return self
 
 
@@ -460,8 +462,10 @@ class AnalysisConfig(BaseModel):
     @field_validator("depth_range")
     @classmethod
     def _depth_range_ordered(cls, v: Tuple[int, int]) -> Tuple[int, int]:
-        # Same logic as IngestionConfig._depth_range_ordered.
-        # Input: tuple (top_depth, bottom_depth) in metres.
+        # Validate that depth_range is a valid (top, bottom) tuple with 0 <= top < bottom.
+        # Physical requirement: the depth layer must be positive and well-defined for
+        # kriging. top is the shallower bound (e.g. 150m), bottom the deeper (e.g. 400m).
+        # Input: tuple (top_depth, bottom_depth) in metres
         # Output: validated tuple unchanged.
         # Raises: pydantic.ValidationError (wraps ValueError) if top < 0 or top >= bottom.
         top, bottom = v
@@ -478,9 +482,8 @@ class AnalysisConfig(BaseModel):
         # profiles, yielding duplicate GPR fits and inflated temporal coverage.
         # Similarly, time_ls_bounds_days[0] < time_step means the optimiser can
         # produce a temporal lengthscale shorter than one bin — physically meaningless.
-        # Also validates date ordering (depends on two fields, so model_validator).
         # Input: AnalysisConfig after all fields and GPRBlock have been validated.
-        # Output: self unchanged if all checks pass.
+        # Output: self unchanged if both checks pass.
         # Raises: pydantic.ValidationError (wraps ValueError) on any violated rule.
         if self.gpr.step_size_days < self.time_step:
             raise ValueError(
@@ -492,6 +495,15 @@ class AnalysisConfig(BaseModel):
                 f"time_ls_bounds_days lower ({self.gpr.time_ls_bounds_days[0]}) "
                 f"must be >= time_step ({self.time_step})."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _dates_ordered(self) -> "AnalysisConfig":
+        # Validate date_start < date_end to ensure the time window is positive.
+        # Separated from _no_bin_aliasing so Pydantic can surface both errors independently.
+        # Input: AnalysisConfig with date_start and date_end set.
+        # Output: self unchanged if dates are ordered correctly.
+        # Raises: pydantic.ValidationError (wraps ValueError) if date_start >= date_end.
         if self.date_start >= self.date_end:
             raise ValueError(
                 f"date_start ({self.date_start}) must be before date_end ({self.date_end})"
