@@ -4,7 +4,7 @@ import datetime as dt
 import pytest
 from pydantic import ValidationError
 
-from ebus_core.config_schema import IngestionConfig
+from ebus_core.config_schema import IngestionConfig, QCPolicyBlock
 
 
 def test_ingestion_config_valid_minimal():
@@ -40,7 +40,6 @@ def test_qc_policy_defaults_and_validation():
     assert cfg.qc_policy.argo_qc_flags_accepted == [1, 2]
 
     # Flag 8 (interpolated) is in Argo domain — should validate
-    from ebus_core.config_schema import QCPolicyBlock
     qc = QCPolicyBlock(argo_qc_flags_accepted=[1, 2, 8])
     assert 8 in qc.argo_qc_flags_accepted
 
