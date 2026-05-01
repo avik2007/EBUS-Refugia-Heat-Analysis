@@ -274,3 +274,59 @@ def test_load_config_rejects_missing_kind(tmp_path):
     with pytest.raises(ValueError) as excinfo:
         load_config(p)
     assert "config_kind" in str(excinfo.value)
+
+
+from ebus_core.manifest import canonical_config_dict, config_hash
+
+
+def test_canonical_config_dict_excludes_description():
+    # canonical_config_dict must strip the free-form description field so it
+    # does not affect the hash. description is annotation-only, not run behavior.
+    cfg = IngestionConfig(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(0, 100),
+        description="version A",
+    )
+    canon = canonical_config_dict(cfg)
+    assert "description" not in canon
+
+
+def test_config_hash_stable_across_description_changes():
+    # Two configs identical except for description must produce the same hash.
+    base = dict(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(0, 100),
+    )
+    cfg_a = IngestionConfig(**base, description="version A")
+    cfg_b = IngestionConfig(**base, description="version B")
+    assert config_hash(cfg_a) == config_hash(cfg_b)
+
+
+def test_config_hash_changes_with_real_field():
+    # Changing a run-relevant field (time_step) must produce a different hash.
+    base = dict(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(0, 100),
+    )
+    cfg_a = IngestionConfig(**base)
+    cfg_b = IngestionConfig(**{**base, "time_step": 30.0})
+    assert config_hash(cfg_a) != config_hash(cfg_b)
+
+
+def test_config_hash_is_64_char_hex():
+    # sha256 hex digest must be exactly 64 characters of valid hex.
+    cfg = IngestionConfig(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(0, 100),
+    )
+    h = config_hash(cfg)
+    assert len(h) == 64
+    int(h, 16)  # raises ValueError if not valid hex
