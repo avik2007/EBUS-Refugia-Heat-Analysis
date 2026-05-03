@@ -378,6 +378,28 @@ class PhysicsParamsBlock(BaseModel):
         return self
 
 
+class BackfillMetadataBlock(BaseModel):
+    """
+    Provenance record written by the backfill script into every legacy config.
+
+    recovered_fields: fields whose values were parsed directly from the run_id
+        string or audit CSV — these are known to be accurate.
+    assumed_fields: fields that fell back to pipeline defaults because the
+        run_id / suffix contained no explicit value — these could differ from
+        what was actually used in the original run.
+
+    The distinction prevents audit readers from treating all backfilled values
+    equally: recovered fields are trustworthy, assumed fields carry uncertainty.
+    Unrecoverable fields (noise_val, *_ls_bounds) are written as null in the
+    config and do not appear in either list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    recovered_fields: List[str] = Field(default_factory=list)
+    assumed_fields: List[str] = Field(default_factory=list)
+
+
 class AnalysisInputBlock(BaseModel):
     """
     Pointer to the parquet source for an analysis run.
@@ -441,11 +463,12 @@ class AnalysisConfig(BaseModel):
     07_ae_deeper_layers.py __main__). One config = one GPR kriging run over
     a single region, depth layer, and time period.
 
-    Cross-field rules:
+    Cross-field rules (each has its own model_validator so errors surface independently):
     - _no_bin_aliasing: step_size_days >= time_step and time_ls_bounds_days[0]
       >= time_step prevent two windows sharing identical bin contents.
+    - _non_legacy_complete: non-legacy configs must supply all GPR provenance fields.
+    - _physics_depth_within_range: OHC integration bounds must lie within depth_range.
     - _dates_ordered: date_start < date_end (same logic as IngestionConfig).
-    Both rules live in a single model_validator to keep the validation graph flat.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -476,6 +499,11 @@ class AnalysisConfig(BaseModel):
     # When True, gpr.noise_val, gpr.time_ls_bounds_days, gpr.lat_ls_bounds, and
     # gpr.lon_ls_bounds may be null. The bin-aliasing time_ls check is also skipped.
     legacy_backfill: bool = False
+
+    # backfill_metadata: populated by 10_ae_backfill_configs.py to record which
+    # fields were recovered from the run_id vs assumed from pipeline defaults.
+    # None for configs written by hand or by the MLOps runner (not backfilled).
+    backfill_metadata: Optional[BackfillMetadataBlock] = None
 
     description: str = ""
 
@@ -562,6 +590,31 @@ class AnalysisConfig(BaseModel):
                     f"Fields required when legacy_backfill=False: {missing}. "
                     f"Set legacy_backfill=True for backfilled configs."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _physics_depth_within_range(self) -> "AnalysisConfig":
+        # Cross-validate PhysicsParamsBlock OHC integration bounds against depth_range.
+        # ohc_depth_top_m must be >= depth_range[0]: the OHC integration cannot start
+        # above the analysis layer (would include water we didn't model).
+        # ohc_depth_bot_m must be <= depth_range[1]: similarly cannot integrate below
+        # the analysis layer. When either field is None the runtime inherits the value
+        # from depth_range, so there is nothing to cross-validate in that case.
+        # Input: AnalysisConfig after all field validators and prior model validators.
+        # Output: self unchanged if valid.
+        # Raises: pydantic.ValidationError (wraps ValueError) if bounds violate depth_range.
+        p = self.physics_params
+        d0, d1 = self.depth_range
+        if p.ohc_depth_top_m is not None and p.ohc_depth_top_m < d0:
+            raise ValueError(
+                f"ohc_depth_top_m ({p.ohc_depth_top_m}) must be >= depth_range[0] "
+                f"({d0}); OHC integration cannot start above the analysis layer."
+            )
+        if p.ohc_depth_bot_m is not None and p.ohc_depth_bot_m > d1:
+            raise ValueError(
+                f"ohc_depth_bot_m ({p.ohc_depth_bot_m}) must be <= depth_range[1] "
+                f"({d1}); OHC integration cannot extend below the analysis layer."
+            )
         return self
 
     @model_validator(mode="after")

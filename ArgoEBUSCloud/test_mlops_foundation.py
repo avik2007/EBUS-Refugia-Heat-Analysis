@@ -217,6 +217,35 @@ def test_physics_params_depth_ordering():
         PhysicsParamsBlock(ohc_depth_top_m=400, ohc_depth_bot_m=150)  # top > bot
 
 
+def test_analysis_config_ohc_bot_exceeds_depth_range():
+    # ohc_depth_bot_m > depth_range[1] must raise ValidationError
+    from pydantic import ValidationError
+    kwargs = _valid_analysis_kwargs()
+    # depth_range is (150, 400); set ohc_depth_bot_m to 500 — outside range
+    kwargs["physics_params"] = {"ohc_depth_bot_m": 500}
+    with pytest.raises(ValidationError, match="ohc_depth_bot_m"):
+        AnalysisConfig(**kwargs)
+
+
+def test_analysis_config_ohc_top_below_depth_range():
+    # ohc_depth_top_m < depth_range[0] must raise ValidationError
+    from pydantic import ValidationError
+    kwargs = _valid_analysis_kwargs()
+    # depth_range is (150, 400); set ohc_depth_top_m to 100 — above the layer
+    kwargs["physics_params"] = {"ohc_depth_top_m": 100}
+    with pytest.raises(ValidationError, match="ohc_depth_top_m"):
+        AnalysisConfig(**kwargs)
+
+
+def test_analysis_config_ohc_bounds_within_depth_range_valid():
+    # ohc bounds within depth_range must parse cleanly
+    kwargs = _valid_analysis_kwargs()
+    kwargs["physics_params"] = {"ohc_depth_top_m": 150, "ohc_depth_bot_m": 400}
+    cfg = AnalysisConfig(**kwargs)
+    assert cfg.physics_params.ohc_depth_top_m == 150
+    assert cfg.physics_params.ohc_depth_bot_m == 400
+
+
 def test_analysis_config_bad_dates_rejected():
     # AnalysisConfig: date_start >= date_end must reject (mirrors ingestion test).
     bad = _valid_analysis_kwargs()
@@ -241,6 +270,15 @@ def test_gpr_gibbs_auto_instantiates_kernel_block():
     assert g.kernel_gibbs.l_form == "sigmoid_dist_to_coast"
     assert g.kernel_matern05 is None
     assert g.kernel_rbf is None
+
+
+def test_fmt_dec_importable_from_ae_utils():
+    # fmt_dec must be importable directly from ae_utils (Gap 4 — centralize formatting)
+    from ebus_core.ae_utils import fmt_dec
+    assert fmt_dec(0.5) == "0_5"
+    assert fmt_dec(10.0) == "10_0"
+    assert fmt_dec(0.25) == "0_25"
+    assert fmt_dec(30.0) == "30_0"
 
 
 import textwrap
@@ -441,7 +479,7 @@ def test_append_registry_appends_one_line(tmp_path):
     parsed = _json.loads(lines[0])
     assert set(parsed.keys()) == {
         "run_id", "kind", "config_hash", "created_at",
-        "region", "depth_range", "manifest_path",
+        "region", "depth_range", "manifest_path", "status",
     }
     assert parsed["region"] == "californiav2"
     assert parsed["depth_range"] == [0, 100]
@@ -645,6 +683,59 @@ def test_run_analysis_omits_spatial_ls_upper_bound_for_legacy(tmp_path, monkeypa
     run_analysis(cfg)
 
     assert "spatial_ls_upper_bound" not in captured_kwargs
+
+
+def test_run_analysis_registry_status_finalized_when_audit_exists(tmp_path, monkeypatch):
+    # When dispatch returns a path that exists on disk, registry status = "finalized"
+    import json as _json
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    def fake_dispatch(**kw):
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        audit = out_dir / f"audit_{run_id}.csv"
+        audit.write_text("dummy,csv\n")
+        return {"audit_csv": str(audit)}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    line = _json.loads((tmp_path / "registry.jsonl").read_text().strip())
+    assert line["status"] == "finalized"
+
+
+def test_run_analysis_registry_status_incomplete_when_audit_missing(tmp_path, monkeypatch):
+    # When dispatch returns a path that does NOT exist, registry status = "incomplete"
+    import json as _json
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    def fake_dispatch(**kw):
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Return a path that does NOT exist — simulates a partial/crashed run
+        return {"audit_csv": str(out_dir / "ghost_audit.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    line = _json.loads((tmp_path / "registry.jsonl").read_text().strip())
+    assert line["status"] == "incomplete"
 
 
 from ebus_core.runner import run_ingestion
@@ -923,3 +1014,58 @@ def test_backfilled_configs_round_trip(tmp_path):
     # unrecoverable bounds are null.
     assert cfg.gpr.noise_val is None
     assert cfg.gpr.time_ls_bounds_days is None
+
+
+def test_backfill_metadata_recovered_fields_present(tmp_path):
+    # backfill_configs must write a backfill_metadata block with recovered_fields
+    # listing fields extracted from the run_id and suffix.
+    import csv as csv_mod
+    from ebus_core.backfill import backfill_configs
+    from ebus_core.config_schema import load_config
+
+    aelogs = tmp_path / "aelogs"
+    run_id = "california_20150101_20151231_res0_5x0_5_t30_0_d0_100_3dmatern_w45"
+    run_dir = aelogs / run_id
+    run_dir.mkdir(parents=True)
+    # Write a minimal audit CSV with noise_val so noise_vals_audit is recovered
+    audit = run_dir / f"audit_{run_id}.csv"
+    with audit.open("w", newline="") as f:
+        w = csv_mod.writer(f)
+        w.writerow(["noise_val"])
+        w.writerow([0.001])
+
+    configs_root = tmp_path / "configs"
+    backfill_configs(aelogs, configs_root)
+
+    cfg = load_config(configs_root / "california" / f"{run_id}.yaml")
+    assert cfg.backfill_metadata is not None
+    # Fields parsed from the run_id must appear in recovered_fields
+    for field in ["region", "date_start", "date_end", "lat_step", "lon_step",
+                  "time_step", "depth_range"]:
+        assert field in cfg.backfill_metadata.recovered_fields, \
+            f"{field} missing from recovered_fields"
+
+
+def test_backfill_metadata_assumed_fields_present(tmp_path):
+    # When mode/kernel_type/window_size_days are not in the suffix they are
+    # assumed defaults; they must appear in assumed_fields, not recovered_fields.
+    from ebus_core.backfill import backfill_configs
+    from ebus_core.config_schema import load_config
+
+    aelogs = tmp_path / "aelogs"
+    # Suffix has no 2d/rbf/w{N} tokens — all GPR fields default
+    run_id = "california_20150101_20151231_res0_5x0_5_t30_0_d0_100"
+    run_dir = aelogs / run_id
+    run_dir.mkdir(parents=True)
+
+    configs_root = tmp_path / "configs"
+    backfill_configs(aelogs, configs_root)
+
+    cfg = load_config(configs_root / "california" / f"{run_id}.yaml")
+    assert cfg.backfill_metadata is not None
+    # mode/kernel_type/window_size_days fell back to defaults — must be assumed
+    for field in ["gpr.mode", "gpr.kernel_type", "gpr.window_size_days"]:
+        assert field in cfg.backfill_metadata.assumed_fields, \
+            f"{field} missing from assumed_fields"
+    # run_id-derived fields must NOT appear in assumed
+    assert "region" not in cfg.backfill_metadata.assumed_fields

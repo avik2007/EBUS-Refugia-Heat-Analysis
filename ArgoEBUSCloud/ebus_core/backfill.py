@@ -21,6 +21,8 @@ from typing import List, Optional
 
 import yaml
 
+from ebus_core.ae_utils import fmt_dec
+
 
 # ---------------------------------------------------------------------------
 # Run-id parsing
@@ -116,13 +118,31 @@ def _parse_suffix(suffix: str, time_step: float) -> dict:
     m_step = re.search(r"t\d+s(\d+)", sfx)
     step_size_days = int(m_step.group(1)) if m_step else int(time_step)
 
-    return {
-        "mode": mode,
-        "kernel_type": kernel_type,
-        "window_size_days": window_size_days,
-        "min_bins": min_bins,
-        "step_size_days": step_size_days,
-    }
+    # recovered: GPR field names whose values were read from the suffix,
+    # not defaulted. Callers use this to populate backfill_metadata.
+    # Uses truthiness of the already-computed regex match objects — no new searches.
+    recovered: set = set()
+    if "2d" in sfx:
+        recovered.add("gpr.mode")
+    if "rbf" in sfx:
+        recovered.add("gpr.kernel_type")
+    if m_win:
+        recovered.add("gpr.window_size_days")
+    if m_bins:
+        recovered.add("gpr.min_bins")
+    if m_step:
+        recovered.add("gpr.step_size_days")
+
+    return (
+        {
+            "mode": mode,
+            "kernel_type": kernel_type,
+            "window_size_days": window_size_days,
+            "min_bins": min_bins,
+            "step_size_days": step_size_days,
+        },
+        frozenset(recovered),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -164,16 +184,14 @@ def _infer_s3_path(region: str, date_start: date, date_end: date,
     # this analysis. The ingestion run_id omits the analysis suffix.
     # Input: config fields (region, dates, grid, depth)
     # Output: s3:// URI string following the existing naming convention
-    def fmt(v: float) -> str:
-        return str(v).replace(".", "_")
-
+    # (no local def fmt — use fmt_dec from ae_utils)
     d0, d1 = depth_range
     ds = date_start.strftime("%Y%m%d")
     de = date_end.strftime("%Y%m%d")
     ingest_id = (
         f"{region}_{ds}_{de}"
-        f"_res{fmt(lat_step)}x{fmt(lon_step)}"
-        f"_t{fmt(time_step)}_d{d0}_{d1}"
+        f"_res{fmt_dec(lat_step)}x{fmt_dec(lon_step)}"
+        f"_t{fmt_dec(time_step)}_d{d0}_{d1}"
     )
     return f"s3://argo-ebus-project-data-abm/{ingest_id}.parquet"
 
@@ -223,8 +241,29 @@ def backfill_configs(
         depth_range: tuple = parsed["depth_range"]
         run_suffix: str = parsed["run_suffix"]
 
-        gpr_recoverable = _parse_suffix(run_suffix, time_step)
+        gpr_recoverable, gpr_suffix_recovered = _parse_suffix(run_suffix, time_step)
+
+        # GPR_SUFFIX_FIELDS: the five fields _parse_suffix classifies.
+        # Any field not in gpr_suffix_recovered was not present in the suffix
+        # and fell back to a pipeline default.
+        GPR_SUFFIX_FIELDS = frozenset({
+            "gpr.mode", "gpr.kernel_type", "gpr.window_size_days",
+            "gpr.min_bins", "gpr.step_size_days",
+        })
+        gpr_recovered = list(gpr_suffix_recovered)
+        gpr_assumed = [f for f in GPR_SUFFIX_FIELDS if f not in gpr_suffix_recovered]
+
         noise_vals = _read_noise_vals(aelog_dir, run_id)
+
+        # noise_vals_audit: recovered if audit CSV existed and had noise_val column
+        if noise_vals is not None:
+            gpr_recovered.append("gpr.noise_vals_audit")
+
+        run_id_recovered = [
+            "region", "date_start", "date_end",
+            "lat_step", "lon_step", "time_step", "depth_range",
+        ]
+        all_recovered = run_id_recovered + gpr_recovered
         s3_path = _infer_s3_path(
             region, date_start, date_end, lat_step, lon_step, time_step, depth_range
         )
@@ -262,6 +301,10 @@ def backfill_configs(
                 "noise_val / time_ls_bounds_days / lat_ls_bounds / lon_ls_bounds "
                 "unrecoverable from pre-manifest run, treat as legacy"
             ),
+            "backfill_metadata": {
+                "recovered_fields": all_recovered,
+                "assumed_fields": gpr_assumed,
+            },
         }
 
         # Write to configs/{region}/{run_id}.yaml

@@ -239,7 +239,7 @@ def check_collision(manifest_path: Path, new_hash: str) -> str:
 # Adding fields requires a schema_version bump on the manifest schema.
 _REGISTRY_FIELDS = (
     "run_id", "kind", "config_hash", "created_at",
-    "region", "depth_range", "manifest_path",
+    "region", "depth_range", "manifest_path", "status",
 )
 
 
@@ -247,6 +247,7 @@ def append_registry(
     manifest: Dict[str, Any],
     registry_path: Path,
     manifest_path: Path,
+    status: str = "finalized",
 ) -> None:
     # Append a denormalized one-line index entry to the JSONL run registry.
     # The registry is the cross-run query surface (region, depth_range, hash lookups).
@@ -266,6 +267,7 @@ def append_registry(
         "region": manifest["config"].get("region"),
         "depth_range": manifest["config"].get("depth_range"),
         "manifest_path": str(manifest_path),
+        "status": status,
     }
     assert set(line.keys()) == set(_REGISTRY_FIELDS)
     with registry_path.open("a") as f:
