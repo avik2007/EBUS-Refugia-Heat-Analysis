@@ -441,11 +441,12 @@ class AnalysisConfig(BaseModel):
     07_ae_deeper_layers.py __main__). One config = one GPR kriging run over
     a single region, depth layer, and time period.
 
-    Cross-field rules:
+    Cross-field rules (each has its own model_validator so errors surface independently):
     - _no_bin_aliasing: step_size_days >= time_step and time_ls_bounds_days[0]
       >= time_step prevent two windows sharing identical bin contents.
+    - _non_legacy_complete: non-legacy configs must supply all GPR provenance fields.
+    - _physics_depth_within_range: OHC integration bounds must lie within depth_range.
     - _dates_ordered: date_start < date_end (same logic as IngestionConfig).
-    Both rules live in a single model_validator to keep the validation graph flat.
     """
 
     model_config = ConfigDict(extra="forbid")
