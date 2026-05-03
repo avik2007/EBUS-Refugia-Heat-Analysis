@@ -217,6 +217,35 @@ def test_physics_params_depth_ordering():
         PhysicsParamsBlock(ohc_depth_top_m=400, ohc_depth_bot_m=150)  # top > bot
 
 
+def test_analysis_config_ohc_bot_exceeds_depth_range():
+    # ohc_depth_bot_m > depth_range[1] must raise ValidationError
+    from pydantic import ValidationError
+    kwargs = _valid_analysis_kwargs()
+    # depth_range is (150, 400); set ohc_depth_bot_m to 500 — outside range
+    kwargs["physics_params"] = {"ohc_depth_bot_m": 500}
+    with pytest.raises(ValidationError, match="ohc_depth_bot_m"):
+        AnalysisConfig(**kwargs)
+
+
+def test_analysis_config_ohc_top_below_depth_range():
+    # ohc_depth_top_m < depth_range[0] must raise ValidationError
+    from pydantic import ValidationError
+    kwargs = _valid_analysis_kwargs()
+    # depth_range is (150, 400); set ohc_depth_top_m to 100 — above the layer
+    kwargs["physics_params"] = {"ohc_depth_top_m": 100}
+    with pytest.raises(ValidationError, match="ohc_depth_top_m"):
+        AnalysisConfig(**kwargs)
+
+
+def test_analysis_config_ohc_bounds_within_depth_range_valid():
+    # ohc bounds within depth_range must parse cleanly
+    kwargs = _valid_analysis_kwargs()
+    kwargs["physics_params"] = {"ohc_depth_top_m": 150, "ohc_depth_bot_m": 400}
+    cfg = AnalysisConfig(**kwargs)
+    assert cfg.physics_params.ohc_depth_top_m == 150
+    assert cfg.physics_params.ohc_depth_bot_m == 400
+
+
 def test_analysis_config_bad_dates_rejected():
     # AnalysisConfig: date_start >= date_end must reject (mirrors ingestion test).
     bad = _valid_analysis_kwargs()

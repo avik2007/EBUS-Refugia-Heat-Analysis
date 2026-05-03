@@ -565,6 +565,31 @@ class AnalysisConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _physics_depth_within_range(self) -> "AnalysisConfig":
+        # Cross-validate PhysicsParamsBlock OHC integration bounds against depth_range.
+        # ohc_depth_top_m must be >= depth_range[0]: the OHC integration cannot start
+        # above the analysis layer (would include water we didn't model).
+        # ohc_depth_bot_m must be <= depth_range[1]: similarly cannot integrate below
+        # the analysis layer. When either field is None the runtime inherits the value
+        # from depth_range, so there is nothing to cross-validate in that case.
+        # Input: AnalysisConfig after all field validators and prior model validators.
+        # Output: self unchanged if valid.
+        # Raises: pydantic.ValidationError (wraps ValueError) if bounds violate depth_range.
+        p = self.physics_params
+        d0, d1 = self.depth_range
+        if p.ohc_depth_top_m is not None and p.ohc_depth_top_m < d0:
+            raise ValueError(
+                f"ohc_depth_top_m ({p.ohc_depth_top_m}) must be >= depth_range[0] "
+                f"({d0}); OHC integration cannot start above the analysis layer."
+            )
+        if p.ohc_depth_bot_m is not None and p.ohc_depth_bot_m > d1:
+            raise ValueError(
+                f"ohc_depth_bot_m ({p.ohc_depth_bot_m}) must be <= depth_range[1] "
+                f"({d1}); OHC integration cannot extend below the analysis layer."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _dates_ordered(self) -> "AnalysisConfig":
         # Validate date_start < date_end to ensure the time window is positive.
         # Separated from _no_bin_aliasing so Pydantic can surface both errors independently.
