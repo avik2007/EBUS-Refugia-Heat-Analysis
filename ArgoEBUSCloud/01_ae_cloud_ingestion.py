@@ -77,7 +77,9 @@ def process_ebus_cloud_pipeline(
         'lon_bin': pd.Series(dtype='float64'),
         'ohc': pd.Series(dtype='float64'),
         'ohc_per_m': pd.Series(dtype='float64'),
-        'n_raw_points': pd.Series(dtype='int64')
+        'n_raw_points': pd.Series(dtype='int64'),
+        'platform_number': pd.Series(dtype='str'),
+        'dist_to_coast_km': pd.Series(dtype='float64')
     })
 
     print(f"⚙️ Step 3: Running thermodynamics on {len(ddf.partitions)} partitions...")

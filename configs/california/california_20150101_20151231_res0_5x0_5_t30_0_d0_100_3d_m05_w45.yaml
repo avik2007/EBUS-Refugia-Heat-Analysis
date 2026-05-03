@@ -1,0 +1,53 @@
+schema_version: 1
+config_kind: analysis
+legacy_backfill: true
+input:
+  source: s3
+  s3_path: s3://argo-ebus-project-data-abm/california_20150101_20151231_res0_5x0_5_t30_0_d0_100.parquet
+region: california
+date_start: '2015-01-01'
+date_end: '2015-12-31'
+lat_step: 0.5
+lon_step: 0.5
+time_step: 30.0
+depth_range:
+- 0
+- 100
+gpr:
+  mode: 3D
+  kernel_type: matern0.5
+  window_size_days: 45
+  step_size_days: 30
+  min_bins: 10
+  noise_val: null
+  time_ls_bounds_days: null
+  lat_ls_bounds: null
+  lon_ls_bounds: null
+  noise_vals_audit:
+  - 0.00021559004271302516
+  - 0.00015304938357064862
+  - 0.0018088957066762742
+  - 0.0025572860516353325
+  - 0.008675888648764013
+  - 0.03089966183658909
+  - 0.012693862902616915
+  - 0.008208250653641069
+  - 0.008716112950727481
+  - 0.010238924406510553
+  - 0.007095176162376212
+  - 0.008114444055514432
+  - 0.0033310407927055175
+  - 0.0219515219071842
+  - 0.003841919266567041
+  - 0.00892207009945246
+  - 0.02369539308017063
+  - 0.0008766248937256281
+  - 0.0016063326439813785
+  - 0.002051592001018178
+  - 0.014252564760690832
+  - 0.008667493601688905
+  - 0.009851445476315557
+  run_suffix: _3d_m05_w45
+description: backfilled from california_20150101_20151231_res0_5x0_5_t30_0_d0_100_3d_m05_w45
+  on 2026-04-30; noise_val / time_ls_bounds_days / lat_ls_bounds / lon_ls_bounds unrecoverable
+  from pre-manifest run, treat as legacy

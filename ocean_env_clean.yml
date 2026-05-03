@@ -354,6 +354,8 @@ dependencies:
       - frozenlist==1.8.0
       - multidict==6.7.0
       - propcache==0.4.1
+      - pydantic>=2.0
+      - pytest>=7.0
       - xarray==2025.9.0
       - yarl==1.22.0
 prefix: /home/avik2007/miniconda3/envs/oceanography

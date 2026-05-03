@@ -251,6 +251,12 @@ def estimate_ohc_from_raw_bins(df,
     
     # Merge the metadata (Points + Float ID) into the OHC results
     results = results.merge(meta_agg, on=['time_bin', 'lat_bin', 'lon_bin'], how='left')
+    
+    # --- [NEW] CALCULATE DISTANCE TO COAST ---
+    # We calculate the distance for every grid center (lat_bin, lon_bin)
+    from .ae_utils import calculate_dist_to_coast
+    results['dist_to_coast_km'] = calculate_dist_to_coast(results['lat_bin'].values, results['lon_bin'].values)
+    
     # --- CRITICAL TYPE FIX ---
     # Ensure IDs are strings so PyArrow doesn't crash during S3 upload
     results['platform_number'] = results['platform_number'].astype(str)

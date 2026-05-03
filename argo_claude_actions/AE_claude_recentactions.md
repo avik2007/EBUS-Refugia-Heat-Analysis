@@ -2,6 +2,657 @@
 
 ---
 
+## 2026-04-30 (session 8) — MLOps Foundation Phase 5: Docs complete
+
+Phase 5 fully complete on branch `feat/mlops-phase2`. 4 doc changes written.
+
+- `README.md`: added MLOps Tooling section + `aebus` quickstart (validate/analyze/list/show)
+- `CLAUDE.md`: added Config-Driven Workflow section (preferred entry point; scripts = escape hatch)
+- `ae_file_structure.txt`: documented 8 new files — `config_schema.py`, `manifest.py`, `runner.py`, `backfill.py` (ebus_core/), `10_ae_backfill_configs.py`, `aebus_cli.py`, `test_mlops_foundation.py`, `configs/` tree
+- `configs/README.md`: new file — schema field reference, versioning table, backfill null-field conventions
+
+All Phase 4 + Phase 5 changes now ready to commit together.
+
+---
+
+## 2026-04-30 (session 7) — MLOps Foundation Phase 4: Backfill complete (44 tests)
+
+Phase 4 fully complete on branch `feat/mlops-phase2`. 44 tests passing (up from 41).
+18 `configs/*.yaml` files written. All round-trip via `load_config` + `derive_run_id`.
+
+### Branch + test state
+
+- Branch: `feat/mlops-phase2`
+- Tests: 44 passing
+- Last commit: `755ca59` (unchanged — no commit yet this session; Phase 5 docs will commit)
+- New untracked: `ArgoEBUSCloud/ebus_core/backfill.py`, `ArgoEBUSCloud/10_ae_backfill_configs.py`, `configs/california/` (15 YAMLs), `configs/californiav2/` (3 YAMLs)
+
+### Schema changes — `ebus_core/config_schema.py`
+
+- Added `List` to imports.
+- `GPRBlock`: `noise_val`, `time_ls_bounds_days`, `lat_ls_bounds`, `lon_ls_bounds` made `Optional` (null permitted for legacy backfill). Added `noise_vals_audit: Optional[List[float]] = None` (per-window empirical noise from audit CSV). Added `_noise_val_positive` field validator (skips when None). Updated `_ls_bounds_ordered` to also validate `time_ls_bounds_days` and skip all three when None.
+- `IngestionConfig` + `AnalysisConfig`: added `legacy_backfill: bool = False`.
+- `AnalysisConfig._no_bin_aliasing`: both bin-aliasing checks (step_size_days and time_ls_bounds_days) now skip entirely when `legacy_backfill=True`. This was necessary because the `_t1s10` experimental run had `step_size_days=10 < time_step=30` deliberately.
+- New `AnalysisConfig._non_legacy_complete` validator: when `legacy_backfill=False`, asserts `gpr.noise_val`, `gpr.lat_ls_bounds`, `gpr.lon_ls_bounds` are all non-None.
+
+### New files
+
+**`ArgoEBUSCloud/ebus_core/backfill.py`** — core backfill logic:
+- `_RUN_ID_PATTERN` regex decomposes canonical run_id into 9 groups.
+- `_fmt_to_float(s)` — reverses `_fmt_dec` (e.g. `"0_5"` → `0.5`).
+- `_parse_run_id(run_id)` → dict with all config fields recoverable from the run_id.
+- `_parse_suffix(suffix, time_step)` → infers mode, kernel_type, window_size_days, min_bins, step_size_days from suffix tokens. step_size_days defaults to time_step when not in suffix.
+- `_read_noise_vals(aelog_dir, run_id)` → reads all `noise_val` column values from audit CSV as `List[float]`.
+- `_infer_s3_path(...)` → constructs expected S3 parquet URI from config fields.
+- `backfill_configs(aelogs_root, configs_root, today)` → main fn. Walks dirs, writes one YAML per dir with null for unrecoverable fields + `legacy_backfill=true`.
+
+**`ArgoEBUSCloud/10_ae_backfill_configs.py`** — CLI wrapper that calls `backfill_configs` with project-relative paths.
+
+### Tests added (3 new)
+
+- `test_legacy_backfill_marker_permits_null_provenance` — AnalysisConfig with `legacy_backfill=True` and all 4 gpr fields null parses without error.
+- `test_non_legacy_config_requires_gpr_bounds` — same config with `legacy_backfill=False` raises ValidationError.
+- `test_backfilled_configs_round_trip` — fixture aelog dir + audit CSV → `backfill_configs` → `load_config` → `derive_run_id` matches source dir name; `noise_vals_audit` matches CSV rows; null fields are null.
+
+### Backfill output
+
+18 YAMLs produced and all round-trip verified:
+- `configs/california/` — 15 files (all `california` t30 runs including 2D-RBF, matern variants, experiment suffixes)
+- `configs/californiav2/` — 3 files (FX2 canonical Skin/Source/Background)
+
+Unrecoverable fields written as null: `noise_val`, `time_ls_bounds_days`, `lat_ls_bounds`, `lon_ls_bounds`.
+Recovered from audit CSV: `noise_vals_audit` (list of per-window optimized noise).
+Recovered from suffix: mode, kernel_type, window_size_days, min_bins, step_size_days.
+
+Last updated: 2026-04-30 (session 7)
+
+---
+
+## 2026-04-30 (session 6) — MLOps Foundation Phase 3: CLI complete (41 tests)
+
+Phase 3 fully complete on branch `feat/mlops-phase2`. 41 tests passing (up from 36).
+
+### Branch + test state
+
+- Branch: `feat/mlops-phase2`
+- Tests: 41 passing
+- Last commit: `755ca59`
+
+### Commit 58e43c8 — feat(mlops): aebus CLI with validate subcommand
+
+**Task 3.1.** Created `ArgoEBUSCloud/aebus_cli.py`:
+- argparse skeleton with `prog="aebus"` and required subcommand
+- `cmd_validate(args)` — loads config via `load_config`, derives run_id, prints `config_kind` / `run_id` / `manifest` path. Returns exit 2 on ValidationError.
+- `main(argv)` — wires subparsers, raises SystemExit.
+- Path injection: `sys.path.insert(0, str(_HERE))` so `python ArgoEBUSCloud/aebus_cli.py` works from repo root.
+- Tests added: `test_cli_validate_prints_run_id`, `test_cli_validate_bad_yaml_exits_2`.
+
+### Commit 82c76c9 — feat(mlops): aebus analyze + ingest subcommands with collision exit code 3
+
+**Task 3.2.** Extended `aebus_cli.py`:
+- `cmd_analyze` — validates config kind, calls `run_analysis`, catches `ManifestCollisionError` → exit 3.
+- `cmd_ingest` — same pattern for ingestion.
+- `p_ana` + `p_ing` subparsers with `--registry` and `--force-overwrite` flags.
+- Plan test YAML contained removed field `spatial_ls_upper_bound` (superseded by §A.2 split-anisotropy); dropped from test fixture.
+- Test added: `test_cli_analyze_collision_aborts`.
+
+### Commit 755ca59 — feat(mlops): aebus list + show subcommands query the registry
+
+**Task 3.3.** Extended `aebus_cli.py`:
+- `cmd_list` — reads `registry.jsonl`, filters by `--region` / `--kind`, prints fixed-width table.
+- `cmd_show` — looks up `run_id` in registry, reads and prints `manifest.json`.
+- `p_list` + `p_show` subparsers registered.
+- Tests added: `test_cli_list_filters_by_region`, `test_cli_show_prints_manifest_json`.
+- Plan used `json` but test file imports it as `_json`; fixed consistently.
+
+### Note on plan test YAML
+
+Plan's `test_cli_analyze_collision_aborts` fixture used `spatial_ls_upper_bound: 10` — field removed from `GPRBlock` in §A.2 (split into `lat_ls_bounds` / `lon_ls_bounds`). Dropped silently; no schema change needed.
+
+---
+
+## 2026-04-30 (session 5) — MLOps Foundation Phase 2: Tasks 2.3, 2.5, 2.4 complete
+
+Phase 2 fully complete on branch `feat/mlops-phase2`. 36 tests passing.
+
+### Branch + test state
+
+- Branch: `feat/mlops-phase2`
+- Tests: 36 passing (up from 34 at session start)
+- Last commit: `3f2c8d6`
+
+### Commit ca696e5 — feat(mlops): run_analysis wraps existing GPR fn with manifest + collision detection
+
+**Task 2.3.** Appended to `ArgoEBUSCloud/ebus_core/runner.py`:
+- `_call_run_diagnostic_inspection(**kwargs)` — shim that loads script 05 via importlib
+  and calls `run_diagnostic_inspection`. Tests monkeypatch this whole function.
+- `run_analysis(cfg, registry_path, force_overwrite)` — dispatches to shim, times run,
+  builds manifest, writes manifest.json, appends registry.
+- dispatch_kwargs excludes `spatial_ls_upper_bound` — field absent from GPRBlock after
+  §A.2 split-anisotropy redesign (was `lat_ls_bounds`/`lon_ls_bounds`).
+- Test was pre-written in test file (caused ImportError at collection time); test now passes.
+- Updated imports: added `shutil`, `time as _time`, `ManifestCollisionError`,
+  `append_registry`, `check_collision`, `write_manifest` from manifest module.
+
+### Commit d0f609e — feat(mlops): expose run_ingestion_pipeline seam in script 02
+
+**Task 2.5.** Added `run_ingestion_pipeline = run_cloud_pipeline` alias to
+`02_ae_cloud_run.py` just before `__main__`. One-line seam so runner shim can
+dispatch by a stable, intent-clear name. Chose Option A (alias) over Option B
+(change shim) because Option B would fail in production due to kwargs mismatch.
+
+### Commit 3f2c8d6 — feat(mlops): run_ingestion wraps existing cloud-ingest pipeline
+
+**Task 2.4.** Appended to `ArgoEBUSCloud/ebus_core/runner.py`:
+- `INGESTION_AELOGS_DIR` — module-level Path constant, monkeypatchable by tests.
+- `_call_run_ingestion(**kwargs)` — shim that loads script 02 via importlib and calls
+  `run_ingestion_pipeline`. Raises RuntimeError if seam absent.
+- `run_ingestion(cfg, registry_path, force_overwrite)` — mirrors run_analysis pattern.
+  dispatch_kwargs includes date_start, date_end, n_workers, worker_region, s3_bucket.
+
+---
+
+## 2026-04-30 (session 4) — MLOps Foundation Phase 2: Tasks 2.1 + 2.2 complete
+
+Phase 2 started on branch `feat/mlops-phase2`. Two tasks complete, three remain.
+
+### Branch + test state
+
+- Branch: `feat/mlops-phase2` (created this session from `main` at `084c7e6`)
+- Tests: 34 passing (up from 29 at session start)
+- Last commit: `ecc3828`
+
+### Commit 148c11e — feat(mlops): derive_run_id matches existing canonical naming
+
+**Task 2.1.** Created `ArgoEBUSCloud/ebus_core/runner.py` with:
+- `derive_run_id(cfg)` — reproduces the canonical run_id pattern used by existing
+  scripts (region_YYYYMMDD_YYYYMMDD_res{lat}x{lon}_t{time}_d{d0}_{d1}[{run_suffix}])
+- `_fmt_dec(x)` — float → underscore decimal string (0.5 → "0_5", 10.0 → "10_0")
+- Verbose comments explaining backward-compat rationale, why d0/d1 are raw ints
+  (not through _fmt_dec), and run_suffix leading-underscore ownership
+- 2 new tests: AnalysisConfig and IngestionConfig canonical patterns
+- Two-stage review: spec compliant ✅, code quality NEEDS_WORK (comments) → fixed → APPROVED ✅
+
+### Commit 13acc75 — feat(mlops): build_manifest assembles full manifest dict from config + metadata
+
+**Task 2.2.** Appended `build_manifest(cfg, outputs, inputs_extra, duration_sec, conda_list_dest, cwd=None)` to runner.py:
+- Pure function (no file IO) assembles full manifest dict with 12 top-level keys
+- §A.4: teos10_convention="gsw-3.x" injected into env block
+- inputs block branches on AnalysisConfig vs IngestionConfig
+- 3 new tests: required top-level keys, §A.4 erddap lineage, IngestionConfig branch
+- Spec compliant ✅
+
+### Commit ecc3828 — fix(mlops): build_manifest config fields win over inputs_extra; add ingestion test
+
+**Task 2.2 code-review fix.** Code review found:
+- C1 (Critical): inputs_extra spread was LAST, silently overwriting config-derived fields
+  Fixed: reversed merge order so config fields (source, s3_path, ingestion_run_id) come last
+- I1: teos10 comment expanded to explain convention-family-tag vs version-pin semantics
+- I2: docstring OUTPUT section now enumerates all 12 keys
+- I3: added test_build_manifest_ingestion_config (IngestionConfig branch coverage)
+- Code quality APPROVED ✅
+
+### Kwargs drift documented
+
+`run_diagnostic_inspection` in `05_ae_update_tomatern0.5.py` does NOT accept: mode,
+kernel_type, window_size_days, min_bins, noise_val. `spatial_ls_upper_bound` is in the
+function signature (default=10) but NOT in GPRBlock. Task 2.3 shim must filter kwargs
+accordingly. (To be documented in AE_claude_lessons.md in next session.)
+
+### Open tasks — Phase 2
+
+- Task 2.3 (run_analysis wrapper): IN PROGRESS — implementer agent was dispatched
+  but was interrupted by context limit. Full context + kwargs-drift analysis prepared.
+  Resume point: dispatch fresh implementer subagent with the prompt built in this session.
+- Task 2.5 (callable seam audit): pending
+- Task 2.4 (run_ingestion wrapper): pending, blocked on Task 2.5
+
+Last updated: 2026-04-30 (session 4)
+
+---
+
+## 2026-04-30 (session 3) — MLOps Foundation Phase 1: Tasks 1.1–1.8, all complete
+
+Phase 1 of the MLOps foundation is fully implemented and committed. 29 tests
+pass. All work on branch `main`.
+
+### Commit bd018b9 — chore(mlops): hoist QCPolicyBlock test import to module top
+
+Landed the deferred Task 1.1 code-review nit (I3): promoted
+`from ebus_core.config_schema import QCPolicyBlock` from inside the
+`test_qc_policy_defaults_and_validation` body to module-top alongside
+the existing `IngestionConfig` import. Comment-only + import-hygiene; no
+behaviour change. 2 tests still pass.
+
+### Commit 1deb899 — feat(mlops): add IngestionConfig validators for region, depth, dates
+
+Task 1.2. Three validators added to `IngestionConfig`:
+- `_region_in_registry`: calls `get_ebus_registry()`, rejects unknown regions
+- `_depth_range_ordered`: rejects `depth_range` where top < 0 or top >= bottom
+- `_dates_ordered`: model_validator rejecting date_start >= date_end
+4 new tests (unknown key, unknown region, bad dates, bad depth). 6 tests pass.
+
+### Commit c9698f1 — chore(mlops): fix validator Raises comments
+
+Code-review fix: changed "Raises: ValueError" to
+"Raises: pydantic.ValidationError (wraps ValueError)" in all three new
+validator header comments. Comment-only; no behaviour change.
+
+### Commit cca8837 — feat(mlops): add AnalysisConfig with GPR/input/output/physics sub-blocks and bin-aliasing rule
+
+Task 1.3 with §A.2 + §A.3 amendments applied.
+
+New classes in `config_schema.py`:
+- `KernelRBFBlock`, `KernelMatern05Block` — empty placeholder kernel blocks
+- `KernelGibbsBlock` — full RG-Gibbs sigmoid-of-dist_to_coast params
+  (l_min_km, l_max_km, d_transition, k_steepness, anisotropy_lat_lon_ratio,
+  climatology_source per 2026-04-26 l(x) directive)
+- `GPRBlock` — §A.2: lat_ls_bounds + lon_ls_bounds split (NOT spatial_ls_upper_bound),
+  polymorphic kernel sub-blocks with `_kernel_sub_block_exclusive` validator that
+  auto-instantiates the matching block; `_ls_bounds_ordered` on both bound fields
+- `PhysicsParamsBlock` — §A.3: OHC integration constants, _depth_top_below_bot validator
+- `AnalysisInputBlock` — s3/ingestion_run pointer with _exactly_one_pointer validator
+- `OutputsBlock` — artifact dirs
+- `AnalysisConfig` — top-level with _region_in_registry, _depth_range_ordered,
+  _no_bin_aliasing (step_size_days >= time_step AND time_ls_bounds lower >= time_step),
+  physics_params field
+
+6 new tests including §A.6 additions: polymorphic_kernel_blocks_exclusive,
+lat_lon_ls_bounds_split_validates, physics_params_depth_ordering. 12 tests pass.
+
+### Commit e1c152e — fix(mlops): split _no_bin_aliasing/_dates_ordered, fix setattr idiom, add 3 tests
+
+Code-review fixes for Task 1.3:
+- C1: Split `_no_bin_aliasing` + `_dates_ordered` into two separate validators
+  so Pydantic can surface both errors independently
+- I1: `object.__setattr__` → `setattr` in `_kernel_sub_block_exclusive` (correct
+  Pydantic v2 idiom for non-frozen models)
+- M1: Full header comment on `AnalysisConfig._depth_range_ordered`
+- Added: `test_analysis_config_bad_dates_rejected`, `test_analysis_input_block_ingestion_run_requires_run_id`,
+  `test_gpr_gibbs_auto_instantiates_kernel_block`. 15 tests pass.
+
+### Commit 1152903 — feat(mlops): add load_config() YAML loader dispatching on config_kind
+
+Task 1.4. `load_config(path)` in `config_schema.py`:
+- Reads YAML with `yaml.safe_load`
+- Dispatches to `IngestionConfig` or `AnalysisConfig` on `config_kind`
+- Raises ValueError if top-level is not a mapping or config_kind missing/unknown
+Added `yaml` + `pathlib.Path` + `Union` imports. 2 new tests. 17 tests pass.
+
+### Commit 0b1110a — feat(mlops): canonicalize configs and compute sha256 hash
+
+Task 1.5. New file `ArgoEBUSCloud/ebus_core/manifest.py` with:
+- `canonical_config_dict(cfg)` — model_dump(mode='json'), strip _HASH_EXCLUDE
+  (description), recursively sort all dict keys
+- `config_hash(cfg)` — sha256 hex digest of json.dumps(canon)
+4 new tests: excludes description, stable across description, changes with real
+field, 64-char hex. 21 tests pass.
+
+### Commit 2896cb3 — feat(mlops): capture git, conda env, and host metadata for manifests
+
+Task 1.6. Added to `manifest.py`:
+- `KEY_PACKAGES` tuple: scikit-learn, xarray, numpy, pandas, gsw, coiled, dask,
+  matplotlib, cartopy, scipy (§A.4 scipy added)
+- `capture_code(cwd)` — git rev-parse HEAD, --porcelain, --abbrev-ref HEAD via subprocess
+- `capture_env(conda_env_name, conda_list_dest)` — conda list --json; inlines
+  KEY_PACKAGES versions; optionally writes full conda_list.txt
+- `capture_host()` — socket.gethostname() + platform.platform()
+3 new tests. 24 tests pass.
+
+### Commit 084c7e6 — feat(mlops): manifest read/write, collision detector, and run registry
+
+Tasks 1.7 + 1.8.
+
+Task 1.7 additions to `manifest.py`:
+- `ManifestCollisionError` — Exception subclass for run_id collision
+- `write_manifest(manifest, path)` — json.dump with indent=2, sort_keys, mkdir -p
+- `read_manifest(path)` — json.load
+- `check_collision(manifest_path, new_hash)` → "fresh" / "rerun" / raises
+  ManifestCollisionError (with both hashes in message)
+
+Task 1.8 additions:
+- `_REGISTRY_FIELDS` tuple — canonical JSONL line schema
+- `append_registry(manifest, registry_path, manifest_path)` — appends one
+  denormalized JSON line per run to AEResults/run_registry.jsonl
+
+5 new tests: roundtrip, collision_no_existing, collision_same_hash,
+collision_different_hash, append_registry_appends_one_line. 29 tests pass.
+
+### End state
+
+- Branch: `main`
+- Last commit: `084c7e6`
+- 29 tests passing
+- Files created this session:
+  - `ArgoEBUSCloud/ebus_core/config_schema.py` (expanded: AnalysisConfig + sub-models)
+  - `ArgoEBUSCloud/ebus_core/manifest.py` (new)
+  - `ArgoEBUSCloud/test_mlops_foundation.py` (expanded: 29 tests)
+- Working tree dirty: `.gitignore` (M), `argo_claude_actions/` (M),
+  `argo_gemini_actions/` (M, pre-existing), `.claude/`, `09_*`,
+  `float_census_viewer.ipynb` (untracked, separate work)
+
+Last updated: 2026-04-30 (session 3)
+
+---
+
+## 2026-04-26 (session 2) — MLOps Foundation: side-decision commits + Task 1.1 implementation
+
+### Commit e93ae01 — docs: Gemini RG-Gibbs + MLOps review specs + brainstorm plan
+
+Side-decision 1 from prior session resolved: tracked the 4 untracked Gemini
+specs that the plan §A amendment block references (so future readers can
+trace amendment provenance). Files added:
+- `docs/superpowers/specs/2026-04-11-rg-gibbs-nonstationary-gpr-design.md`
+- `docs/superpowers/specs/2026-04-26-fx2-diagnostics-verdict.md`
+- `docs/superpowers/specs/2026-04-26-mlops-review-results.md`
+- `docs/superpowers/specs/2026-04-26-rg-gibbs-l-x-directive.md`
+- `argo_claude_actions/brainstorming/RG_Gibbs_NonStationary_Model_Plan.md`
+
+### Commit 2f1e570 — feat(pipeline): dist_to_coast feature + californiav3
+
+Side-decision 2 resolved: committed Gemini's `dist_to_coast` integration
+so Phase 1 diff lands purely on top of stable pipeline state. Files:
+- `ArgoEBUSCloud/ebus_core/ae_utils.py` — new `get_coastline_points()`
+  + `calculate_dist_to_coast()` (KDTree on 3D ECEF unit-vector space +
+  exact Haversine on nearest vertex; isotropic-on-sphere). Adds
+  `californiav3` registry entry (lat 30–48, lon -135 to -115).
+- `ArgoEBUSCloud/ebus_core/argoebus_thermodynamics.py` —
+  `estimate_ohc_from_raw_bins()` stamps `dist_to_coast_km` on every grid
+  center.
+- `ArgoEBUSCloud/01_ae_cloud_ingestion.py` /
+  `ArgoEBUSCloud/02_ae_cloud_run.py` — added `dist_to_coast_km` +
+  `platform_number` to dask meta schema.
+- `CLAUDE.md` + `ae_file_structure.txt` — doc updates.
+
+Files DELIBERATELY left uncommitted: `.gitignore` (M), the `argo_*_actions/`
+diaries (M), `.claude/` (untracked, personal), the new `09_*` float census
+scripts + `float_census_viewer.ipynb` (untracked, separate work). Out of
+scope per todo.
+
+### Commit a27d324 — feat(mlops): IngestionConfig pydantic stub + first valid-parse test
+
+**Task 1.1 implementation, dispatched via subagent-driven-development skill.**
+Implementer = sonnet general-purpose. TDD followed (test wrote first,
+ran red, then green). Files created:
+- `ArgoEBUSCloud/ebus_core/config_schema.py` (88 lines) — module
+  docstring; `CloudBlock`, `S3Block`, `QCPolicyBlock`, `IngestionConfig`
+  pydantic v2 models. §A.1 amendment folded in: `QCPolicyBlock` carries
+  `argo_qc_flags_accepted=[1, 2]` default, `_flags_in_argo_domain`
+  validator rejects flags outside `{1,2,3,4,5,8,9}`. Project verbose-comment
+  rule honored on every field.
+- `ArgoEBUSCloud/test_mlops_foundation.py` (49 lines) — 2 tests:
+  `test_ingestion_config_valid_minimal` (plan stub) +
+  `test_qc_policy_defaults_and_validation` (§A.6 amendment).
+  `cd ArgoEBUSAnalysis && conda run -n ebus-cloud-env pytest
+  ArgoEBUSCloud/test_mlops_foundation.py -v` → `2 passed`.
+
+### Two-stage review for Task 1.1
+
+**Spec compliance review (sonnet general-purpose):** ✅ Spec compliant.
+Confirmed every required class/field/validator/default present, both tests
+present, exactly 2 files touched, commit msg + co-author trailer correct.
+
+**Code-quality review (superpowers:code-reviewer):** Approved with minor
+fixes. Findings:
+- **I1** (Important): `IngestionConfig` lacks `depth_range[0] < depth_range[1]`
+  validator. **CONTROLLER DEFERRED to Task 1.2** — Task 1.2 is explicitly
+  "IngestionConfig validation rules" (plan:346). Adding now violates
+  surgical-changes rule and TDD-incremental design.
+- **I2** (Important): `test_ingestion_config_valid_minimal` only spot-checks
+  3 attributes. **CONTROLLER DEFERRED** — plan stub spec listed exactly
+  those 3 assertions; expanding is over-spec.
+- **I3** (Important): `from ebus_core.config_schema import QCPolicyBlock`
+  is inside `test_qc_policy_defaults_and_validation` body instead of at
+  module top. **NOT FIXED** — implementer dispatch was REJECTED by user
+  (context-limit interrupt) before the fix landed. Fix is one edit:
+  promote import to module top alongside the existing IngestionConfig
+  import.
+- M1/M2/M3 (Minor): worker_region open string, notes default `""` vs
+  `Optional[str]=None`, premature fixture extraction. All deferred per
+  surgical-changes.
+
+### Workflow notes
+
+- Subagent-driven-development skill loaded; implementer-prompt + spec-
+  reviewer-prompt + code-quality-reviewer-prompt templates used verbatim.
+- TaskCreate seeded all 12 Phase-1+ tasks (#1–#12); Task 1.1 currently
+  status `in_progress` because I3 fix not yet committed.
+- Working on branch `main` (per project hard-stop default; user did not
+  request a feature branch when authorizing Task 1.1 start).
+
+---
+
+## 2026-04-26 — MLOps Foundation: Gemini-review amendments + Phase 0 env install
+
+Two commits landed this session:
+
+### Commit 3bc7b75 — spec+plan amendments per Gemini review
+
+Gemini review (`docs/superpowers/specs/2026-04-26-mlops-review-results.md`)
+returned "Approved with conditions." Plus a separate l(x) directive
+(`docs/superpowers/specs/2026-04-26-rg-gibbs-l-x-directive.md`) — learnable
+sigmoid of `dist_to_coast_km` with fixed `l_min`/`l_max` and learnable
+`d_0`/`k`, 2:1 lat:lon anisotropy.
+
+Spec edits (`docs/superpowers/specs/2026-04-25-mlops-foundation-design.md`):
+- §3 IngestionConfig: new `qc_policy` block (Argo flag whitelist + exclusions)
+- §3 AnalysisConfig.gpr: replaced `spatial_ls_upper_bound` with split
+  `lat_ls_bounds` + `lon_ls_bounds`; added polymorphic kernel sub-blocks
+  (`kernel_rbf` / `kernel_matern05` / `kernel_gibbs`); commented
+  `kernel_gibbs` placeholder reflects 2026-04-26 l(x) directive verbatim
+- §3 AnalysisConfig: new `physics_params` block (OHC ref pressure, TEOS-10
+  convention, QC thresholds)
+- §3 validation rules expanded
+- §4 manifest: added `inputs.erddap_dataset_id` + `erddap_server_url` +
+  `data_access_timestamp`; `key_packages` whitelist gains scipy;
+  `env.teos10_convention` top-level
+- §6 backfill: null over assumed defaults; `legacy_backfill: true` marker;
+  depth ranges recorded verbatim (no rewrite to 2026-04-26 RG-aligned bounds)
+- §9 RG-Gibbs forward-reference now points at the reserved `kernel_gibbs`
+  sub-block shape
+
+Plan edits (`docs/superpowers/plans/2026-04-25-mlops-foundation.md`):
+- New §A "2026-04-26 Amendment Block" inserted before Phase 0. Provides
+  Pydantic shapes for `QCPolicyBlock`, `KernelGibbsBlock`, `PhysicsParamsBlock`;
+  rules for the polymorphic kernel validator; ERDDAP+TEOS-10 manifest
+  additions; backfill null policy; six new test cases.
+- Existing per-task text in Phase 1 / Phase 4 is unchanged — implementer
+  subagents read §A in addition to each task and apply where they conflict.
+
+### Commit 59d752d — Phase 0 env install
+
+- `pip install pydantic>=2.0 pytest>=7.0` into `ebus-cloud-env`. Live
+  versions: pydantic 2.13.3, pytest 9.0.3.
+- Added the same two lines to the `pip:` block in
+  `ArgoEBUSCloud/ocean_cloud.yml` (the active env spec for this project).
+- Same additions to `ocean_env_clean.yml` (the `oceanography` env, not
+  `ebus-cloud-env` — note env name mismatch). Followed plan instruction
+  literally; if Avik wants only the active env spec touched, this can be
+  reverted.
+
+### Workflow housekeeping
+
+- Stashed 4 narrative md files (claude+gemini action dirs) before spec/plan
+  edits to keep the WIP narrative cleanly separable. Popped at end.
+- Did NOT add Gemini's untracked specs to git
+  (`2026-04-26-mlops-review-results.md`,
+  `2026-04-26-fx2-diagnostics-verdict.md`,
+  `2026-04-26-rg-gibbs-l-x-directive.md`,
+  `2026-04-11-rg-gibbs-nonstationary-gpr-design.md`,
+  `argo_claude_actions/brainstorming/`). Avik's call whether to commit
+  these as part of a future doc commit.
+- Did NOT touch the existing modified pipeline files
+  (`01_ae_cloud_ingestion.py`, `02_ae_cloud_run.py`, `ae_utils.py`,
+  `argoebus_thermodynamics.py`) — those are Gemini's `dist_to_coast`
+  integration, done work, untouched by Phase 0.
+- Did Phase 0 inline (5 trivial steps); subagent dispatch starts at Phase 1.
+
+### Resume point for next session
+
+Top of `AE_claude_todo.md` updated: Phase 0 retired, Phase 1 is now the
+top priority. Read the plan amendment block §A FIRST, then dispatch the
+first implementer subagent for Task 1.1 per `superpowers:subagent-driven-development`.
+
+Two follow-ups noted in todo: (a) decide whether to commit Gemini's
+untracked specs, (b) verify `02_ae_cloud_run.py` exposes a top-level
+`run_ingestion_pipeline(**kwargs)` callable before Task 2.5 (still open
+dependency from the original todo).
+
+---
+
+## 2026-04-25 — MLOps Foundation: Brainstorm + Spec + Plan (no code yet)
+
+Full brainstorming session for the MLOps showcase initiative (top of 2026-04-24
+todo). Used `superpowers:brainstorming` then `superpowers:writing-plans` skills.
+Three artifacts produced and committed (commit `d119377`).
+
+### Decisions reached during brainstorm
+- **Audience:** sequenced — practitioner-grade infra first, then hiring-target
+  demo polish layered on top.
+- **Top pains:** region scaling (B) + reproducibility (C). Tightly coupled, so
+  treat as one MLOps foundation.
+- **Scope tiers:** A = config-driven runs + manifests + thin CLI (this spec).
+  B = MLflow/W&B (next spec). C = pip pkg + Docker + dashboard (long-term).
+- **Refactor strategy:** additive only. No existing script touched. Old
+  `__main__` blocks remain as escape hatch.
+- **Stage separation:** two configs (`IngestionConfig`, `AnalysisConfig`).
+  Analysis manifest cross-references ingestion manifest hash for full lineage.
+- **Run identity:** preserve current `run_id` pattern verbatim. Disambiguate by
+  collision detector that compares `config_hash` of existing manifest vs new
+  run; abort-with-diff if differ.
+- **Manifest contents:** identity + config + lineage + duration_sec ONLY. No
+  `metrics_summary`, no plot enumeration, no `config_path`. Results live in
+  audit CSV; manifest stays pure-provenance.
+- **Registry:** JSONL (`AEResults/run_registry.jsonl`), append-only, fixed
+  schema_version=1 line shape.
+- **Backfill:** configs only (skip retro-manifests — too low fidelity).
+
+### Files committed (commit d119377)
+- `docs/superpowers/specs/2026-04-25-mlops-foundation-design.md` — full spec,
+  10 sections, ~430 lines
+- `docs/superpowers/plans/2026-04-25-mlops-foundation.md` — 16-task TDD
+  implementation plan, 6 phases (~1100 lines)
+- `argo_gemini_actions/AE_gemini_todo.md` — top entry asks Gemini to review
+  the spec before implementation begins
+
+### What was NOT done
+- No implementation code written. Per project CLAUDE.md hard stop, code only
+  starts after explicit per-session plan approval.
+- No env changes (pydantic + pytest install is Plan Phase 0, deferred).
+- Existing dirty files (01/02/ae_utils/argoebus_thermodynamics, CLAUDE.md,
+  ae_file_structure.txt, etc.) untouched — those are Avik's in-progress work.
+
+### Resume instructions for next session
+Top of `AE_claude_todo.md` now lists "Execute MLOps Foundation Plan" as the
+TOP priority. Read the plan file first, get explicit approval, then dispatch
+via `superpowers:subagent-driven-development` or `superpowers:executing-plans`.
+
+---
+
+## 2026-04-11 — Fix `calculate_dist_to_coast` in `ebus_core/ae_utils.py`
+
+Reviewed Gemini's implementation from today's session and corrected three bugs:
+
+1. **Removed dead `gsw` import** (`ae_utils.py` line ~412). `from gsw import distance` was imported inside the function but never used — would cause import error if gsw unavailable.
+
+2. **Fixed KDTree bias** — replaced naive lat/lon degree-space KDTree with 3D unit-vector (ECEF) KDTree. At CCS latitudes 1° lon ≈ 85 km vs 1° lat ≈ 111 km; raw degree-space tree returns biased nearest neighbor. Fix: convert (lat, lon) → (x, y, z) on unit sphere before building tree. One exact Haversine pass on the single nearest candidate gives correct km distance. O(log N) lookup preserved.
+
+3. **Resolution `50m` → `10m`** — default changed to Natural Earth `10m` (~1–2 km vertex spacing) per approved design. Required for accurate coastal-gradient features in future XGBoost upwelling models.
+
+4. **californiav3 bounds confirmed** — Gemini's census-driven update to lat [30, 48], lon [-135, -115] approved by user. Already in `ae_utils.py`; recorded here for traceability.
+
+No other files touched. `dist_to_coast_km` integration in `argoebus_thermodynamics.py`, `01_ae_cloud_ingestion.py`, and `02_ae_cloud_run.py` left as-is (correct).
+
+---
+
+## 2026-04-02 — Run Scripts 09 + 09b: Long-Term Argo Float Census Results
+
+### Run results
+
+Both scripts executed successfully.
+
+**09 census run:**
+- 58,195 total dives fetched across 6 ERDDAP chunks
+- 25 years with data (2001–2025; no floats in 1999–2000)
+- 503 (year, cell) records in census
+- 25 per-year PNGs + CSV written
+
+**09b analysis results:**
+
+Annual totals: sparse early-Argo era (11 float-obs in 2001), grows steadily to
+~130–176 from 2014 onward. 2025 is the densest year at 199 total.
+
+Top persistent cells (25/25 years present):
+- 47.5°N / -132.5°W — mean 9.92 floats (northwest, open Pacific)
+- 47.5°N / -137.5°W — mean 8.44 floats
+- 47.5°N / -127.5°W — mean 8.28 floats
+- 32.5°N / -122.5°W — mean 7.88 floats (Southern California Bight coastal)
+- 32.5°N / -127.5°W — mean 7.80 floats
+
+Domain recommendation (≥20/25 years): 19 qualifying cells.
+Implied bounding box: lat [25, 50], lon [-140, -115].
+
+**Output files:**
+- `AEResults/aeplots/float_census_california/float_census_california_[YEAR].png` (25 files)
+- `AEResults/aeplots/float_census_california/float_census_california_1999_2025.csv`
+- `AEResults/aeplots/float_census_california/float_census_annual_totals.png`
+- `AEResults/aeplots/float_census_california/float_census_mean_density.png`
+
+**Status:** Awaiting Gemini review to define californiav3.
+
+---
+
+## 2026-04-02 — Implement Scripts 09 + 09b: Long-Term Argo Float Census
+
+**Prompted by:** Source Layer GPR regression in californiav2 FX2 run.
+**Purpose:** Generate empirical float density data so Gemini can define californiav3.
+
+### What was built
+
+**`ArgoEBUSCloud/09_ae_longterm_float_census.py`**
+- Fetches per-dive Argo float positions for the broad california domain
+  (lat [25,50], lon [-140,-110]) in 6 x 5-year chunks via `get_float_history()`.
+- Bins on a 5°×5° grid, counts unique floats per (year, lat_bin, lon_bin).
+- Saves full census to CSV.
+- Generates one Cartopy pcolormesh PNG per year (1999–2024), fixed color scale
+  vmin=0/vmax=15 for year-to-year comparability.
+- Prints top-10 hotspot table to stdout as a sanity check.
+
+**`ArgoEBUSCloud/09b_ae_analyze_float_census.py`**
+- Standalone CSV analysis tool. Produces:
+  1. Annual total float count table (printed + bar chart PNG)
+  2. Top-10 most persistent cells (most years with ≥1 float)
+  3. Mean density Cartopy map (averaged over all 26 years)
+  4. **Domain recommendation table**: cells present in ≥20/26 years, sorted
+     by mean n_floats — the direct empirical input for Gemini to define californiav3.
+     Also prints the implied bounding box of qualifying cells.
+
+### Output paths
+
+All output in `AEResults/aeplots/float_census_california/`:
+- `float_census_california_1999.png` … `float_census_california_2024.png`
+- `float_census_california_1999_2025.csv`
+- `float_census_annual_totals.png` (from 09b)
+- `float_census_mean_density.png` (from 09b)
+
+### Notes for Gemini
+
+The domain recommendation output from `09b` is the key artifact. Run sequence:
+```
+conda run -n ebus-cloud-env python ArgoEBUSCloud/09_ae_longterm_float_census.py
+conda run -n ebus-cloud-env python ArgoEBUSCloud/09b_ae_analyze_float_census.py
+```
+
+The `09b` stdout section headed `=== CALIFORNIAV3 DOMAIN RECOMMENDATION DATA ===`
+lists every 5°×5° cell present in ≥20/26 years and their mean float count, plus
+the implied bounding box. Gemini should:
+1. Review the per-year PNGs and mean density map for spatial context.
+2. Use the recommendation table + implied bounding box as the starting point for v3.
+3. Refine bounds based on oceanographic rationale (e.g., exclude far-offshore
+   Pacific transits, include the full California Undercurrent corridor).
+
+---
+
 ## 2026-04-01 — FX2 Cloud Run + GPR Analysis: californiav2 t10_0 All Layers
 
 **First GPR run on the FX2 canonical parquets (californiav2, time_step=10.0).**

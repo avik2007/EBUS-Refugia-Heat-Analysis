@@ -1,0 +1,64 @@
+schema_version: 1
+config_kind: analysis
+legacy_backfill: true
+input:
+  source: s3
+  s3_path: s3://argo-ebus-project-data-abm/californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100.parquet
+region: californiav2
+date_start: '2015-01-01'
+date_end: '2015-12-31'
+lat_step: 0.5
+lon_step: 0.5
+time_step: 10.0
+depth_range:
+- 0
+- 100
+gpr:
+  mode: 3D
+  kernel_type: matern0.5
+  window_size_days: 45
+  step_size_days: 10
+  min_bins: 10
+  noise_val: null
+  time_ls_bounds_days: null
+  lat_ls_bounds: null
+  lon_ls_bounds: null
+  noise_vals_audit:
+  - 0.003424292112917158
+  - 0.0034334488203213135
+  - 0.0006957996469688836
+  - 0.000636997695751026
+  - 9.999999999999997e-06
+  - 9.999999999999997e-06
+  - 1.2499999999999997e-06
+  - 1.2499999999999997e-06
+  - 3.115389280016878e-06
+  - 1.2499999999999997e-06
+  - 9.999999999999997e-06
+  - 1.2499999999999997e-06
+  - 7.999999999999998e-05
+  - 0.0031510864801233105
+  - 0.0031277275175489215
+  - 0.00042732908801932946
+  - 7.999999999999998e-05
+  - 1.3951152121696324e-06
+  - 1.2499999999999997e-06
+  - 2.9869699723401022e-06
+  - 5.155706927226379e-06
+  - 0.0010808679316950357
+  - 0.0030481938938454116
+  - 0.017658514459403817
+  - 0.0032902102724349153
+  - 0.01781837927078757
+  - 0.020217376947733217
+  - 0.0019040068566850226
+  - 0.005644009732468667
+  - 0.008427912424713637
+  - 0.001312551388952141
+  - 0.00024445521187283056
+  - 0.0012250636607322844
+  - 0.0016175922322332111
+  run_suffix: _3dmatern_w45
+description: backfilled from californiav2_20150101_20151231_res0_5x0_5_t10_0_d0_100_3dmatern_w45
+  on 2026-04-30; noise_val / time_ls_bounds_days / lat_ls_bounds / lon_ls_bounds unrecoverable
+  from pre-manifest run, treat as legacy

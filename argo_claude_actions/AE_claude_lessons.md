@@ -33,6 +33,12 @@ Each entry follows this structure:
 - **Rule**: Every pipeline tool (diagnostic plots, float trajectories, physics history, etc.) must be a proper importable function whose signature matches the other pipeline tools it will be used alongside. At minimum that means `(region, lat_step, lon_step, time_step, depth_range)` for any analysis function. Module-level constants are a red flag. The `if __name__ == "__main__"` block is fine for standalone use, but the real interface is the function.
 - **Why**: The goal is to run California and Humboldt (or Skin and Source layers) in the same script by calling the functions serially with different arguments — not by editing internal parameters and running the same script multiple times.
 
+### 4. GPRBlock does not have spatial_ls_upper_bound — kwargs drift between config schema and script signature
+
+- **Mistake**: Plan's `run_analysis` dispatch_kwargs included `spatial_ls_upper_bound: cfg.gpr.spatial_ls_upper_bound`. That field was removed from GPRBlock in §A.2 (replaced by split `lat_ls_bounds` / `lon_ls_bounds`), so accessing it raises `AttributeError` at runtime.
+- **Rule**: Before writing dispatch_kwargs that reference config fields, grep the actual model definition (`config_schema.py`) to confirm the field exists. Do not trust plan code verbatim — the schema evolves independently.
+- **Why**: The plan was written before §A.2 split-anisotropy amendment. Schema and plan drifted. The runner shim passes ALL config fields to the shim (which filters for production), but the config fields must exist first.
+
 ---
 
 _Update this file immediately after any user correction._

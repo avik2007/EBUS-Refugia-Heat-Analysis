@@ -1,20 +1,128 @@
-# Claude TODO — ArgoEBUSAnalysis
+## 2026-04-30 (session 8) — [DONE] MLOps Phase 5 Complete — Ready to Commit
 
-Last updated: 2026-04-01
+**Status:** Phase 5 COMPLETE. All docs written. 44 tests still passing.
+
+Phase 4 + Phase 5 changes are uncommitted. Commit when ready:
+- `ArgoEBUSCloud/ebus_core/backfill.py` (new)
+- `ArgoEBUSCloud/10_ae_backfill_configs.py` (new)
+- `ArgoEBUSCloud/aebus_cli.py` (new)
+- `ArgoEBUSCloud/ebus_core/config_schema.py` (M)
+- `ArgoEBUSCloud/test_mlops_foundation.py` (M)
+- `configs/california/` (15 YAMLs, new)
+- `configs/californiav2/` (3 YAMLs, new)
+- `configs/README.md` (new)
+- `README.md` (M — MLOps section added)
+- `CLAUDE.md` (M — Config-Driven Workflow section added)
+- `ae_file_structure.txt` (M — 8 new files documented)
+
+Next: create commit on `feat/mlops-phase2` and optionally open PR to `main`.
+
+Last updated: 2026-04-30 (session 8)
 
 ---
 
-## Next Up: Implement Script 09 — Long-Term Argo Float Census
-
-**Plan file:** `argo_claude_actions/2026-04-01_float_census_plan.md`
-
-Build `09_ae_longterm_float_census.py` to map Argo float density across the broad
-`california` domain (lat [25,50], lon [-140,-110]) for 1999–2025 on a 5°×5° grid.
-Output: small-multiples PNG + CSV hotspot table. Purpose: empirically define
-`californiav3` bounds based on where floats actually are at depth, fixing the Source
-Layer sparsity problem that caused the FX2 GPR regression.
+## 2026-04-26 — [HISTORICAL] MLOps Foundation: Phase 1+ resume (superseded by session-3 entry above)
 
 ---
+
+## 2026-04-25 — [SUPERSEDED 2026-04-26] Execute MLOps Foundation Plan
+
+**Status:** Spec + plan written, committed (commit `d119377`). Implementation NOT started.
+Brainstorm phase from 2026-04-24 entry below is COMPLETE and superseded by this entry.
+
+**Spec:** `docs/superpowers/specs/2026-04-25-mlops-foundation-design.md`
+**Plan:** `docs/superpowers/plans/2026-04-25-mlops-foundation.md`
+
+**What this delivers:** A-tier of the MLOps showcase — config-driven runs (YAML per
+region/layer/experiment) + reproducibility manifests (config hash, git SHA, conda env,
+S3 lineage) + thin `aebus` CLI. Additive layer atop existing scripts; no refactor.
+B-tier (MLflow/W&B) and C-tier (pip pkg + Docker + dashboard) deferred to future specs.
+
+**How to resume next session:**
+1. Read the plan top-to-bottom before touching anything.
+2. Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` skill.
+3. Per project CLAUDE.md hard stop: do NOT start implementation until Avik approves the plan in the new session.
+
+**Phase order (16 tasks total, ~6-7 days solo):**
+- Phase 0: install pydantic + pytest into `ebus-cloud-env`, update env spec files (1 task)
+- Phase 1: config_schema.py + manifest.py (8 tasks: schema, validators, YAML loader, hash, git/env capture, manifest IO, collision detector, registry)
+- Phase 2: runner.py wrappers around existing GPR + ingestion fns (5 tasks)
+- Phase 3: aebus CLI — validate / analyze / ingest / list / show (3 tasks)
+- Phase 4: backfill `configs/` from existing AEResults/aelogs/ (2 tasks)
+- Phase 5: docs (README + CLAUDE.md + ae_file_structure.txt + recentactions) (3 tasks)
+
+**Open dependency for Task 2.5:** verify `02_ae_cloud_run.py` exposes a top-level
+`run_ingestion_pipeline(**kwargs)` callable. If not, surgical extract from `__main__`
+required as a separate commit before runner can dispatch.
+
+**Pending Gemini review:** spec entry at top of `argo_gemini_actions/AE_gemini_todo.md`
+asks Gemini to flag any science / reproducibility gaps before implementation begins.
+Worth checking Gemini's response before starting Phase 1.
+
+**Hard stop reminder (project CLAUDE.md):** even within an approved plan, every
+sub-step must be announced verbosely before execution. Per-task TDD discipline
+(write failing test → run → implement → run → commit) is non-negotiable.
+
+Last updated: 2026-04-25
+
+---
+
+## 2026-04-24 — [SUPERSEDED 2026-04-25] Engineering & MLOps Showcase Brainstorm
+
+**Status: COMPLETE.** Brainstorm session 2026-04-25 produced spec + plan
+above. This entry retained for historical context only.
+
+Original goal: project must double as MLOps demo. Brainstorm scoped sequenced
+practitioner-first → hiring-target showcase, identified region scaling +
+reproducibility as top pains, decomposed into A/B/C tiers (A = this spec,
+B = MLflow/W&B next, C = pkg + Docker + dashboard long-term).
+
+Last updated: 2026-04-25
+
+---
+
+## 2026-04-11 — [NEW DIRECTIVE] The RG-Gibbs Non-Stationary Model (Approved)
+
+**Draft spec:** `docs/superpowers/specs/2026-04-11-rg-gibbs-nonstationary-gpr-design.md`
+
+### Decisions locked
+- [x] Stay in sklearn — custom `GibbsKernel` subclass, no GPflow/TF
+- [x] Approach B — new `validate_moving_window_nonstationary()`, existing function untouched
+- [x] RG climatology → S3 Zarr via `00_ae_rg_climatology_ingest.py`
+- [x] New cloud ingestion run with `californiav3`, depths `d0_100` / `d100_500` / `d500_1500`
+- [x] `get_vertical_layers()` → Response [0,100], Source [100,500], Background [500,1500]
+- [x] Interactive focus slider scoped separately (see LinkedIn demo task below)
+
+### [BLOCKED] Open question — GibbsKernel: l(x) functional form
+Brainstorming paused here. Avik reviewing GP oceanography literature.
+Gemini science input also requested (see AE_gemini_todo.md).
+
+**The issue:** Any fixed functional form (sigmoid, linear ramp, dist_to_coast profile) 
+prescribes where and how the lengthscale transitions — which contradicts the Gibbs 
+motivation. Candidate approaches:
+1. Data-density-driven l(x): l = l_max − (l_max−l_min) × normalized_float_density(x)
+2. Fully learnable parametric: expose l_min, l_max, rate α to sklearn optimizer
+3. Literature-guided: adopt established GP oceanography practice
+
+**Resume point:** Section 3 of brainstorm — GibbsKernel class design.
+Run `/brainstorm` and reference `docs/superpowers/specs/2026-04-11-rg-gibbs-nonstationary-gpr-design.md`.
+
+### Remaining implementation tasks (do NOT start until l(x) resolved)
+- [ ] **`00_ae_rg_climatology_ingest.py`** — Copernicus fetch → S3 Zarr
+- [ ] **Cloud ingestion run** — californiav3 + new layer bounds
+- [ ] **`GibbsKernel` class** — in `argoebus_gp_physics.py`
+- [ ] **`load_rg_mean()` helper** — S3 Zarr read + interpolation
+- [ ] **`validate_moving_window_nonstationary()`** — full Gibbs + RG mean GPR engine
+- [ ] **`get_vertical_layers()` update** — ae_utils.py
+
+### LinkedIn Demo (scope separately, after GPR is validated)
+- [ ] **Interactive Focus Slider** — browser demo showing Gibbs kernel resolution vs.
+  standard global smoothing. Publish to LinkedIn once RG-Gibbs model is validated.
+
+Last updated: 2026-04-11
+
+---
+
 
 ## Priority 1: Diagnose FX2 GPR Results — Gemini Review Required
 

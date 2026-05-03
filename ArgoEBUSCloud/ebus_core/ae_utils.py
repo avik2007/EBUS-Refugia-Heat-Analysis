@@ -28,6 +28,16 @@ def get_ebus_registry():
             "time": ["2015-01-01", "2015-12-31"],
             "s3_bucket": "argo-ebus-project-data-abm"
         },
+        # californiav3: optimized spatial bounds based on the 26-year float census.
+        # Lat [30, 48] captures the high-density core of the CCS.
+        # Lon [-135, -115] provides a wider offshore buffer to stabilize the GPR
+        # in the Source Layer (150-400m) where data is sparser than at the surface.
+        "californiav3": {
+            "lat": [30.0, 48.0],
+            "lon": [-135.0, -115.0],
+            "time": ["2015-01-01", "2015-12-31"],
+            "s3_bucket": "argo-ebus-project-data-abm"
+        },
         # Humboldt Current System — bounds corrected to Frontiers 2024 domain.
         # Previous lat [-45,0] was too broad; [-35,-5] isolates the active CUS.
         "humboldt": {
@@ -349,3 +359,86 @@ def get_float_history_by_layer(region="california", pres_min=0, pres_max=100,
 def calculate_bin(value, step):
     """Generic binning helper."""
     return np.floor(value / step) * step
+
+def get_coastline_points(resolution='50m'):
+    """
+    Extracts lon/lat points from Cartopy's coastline feature at a given resolution.
+    Returns a (N, 2) numpy array of [longitude, latitude].
+    """
+    import cartopy.feature as cfeature
+    from shapely.geometry import MultiLineString, LineString
+
+    # Fetch the coastline feature
+    coastline = cfeature.COASTLINE.with_scale(resolution)
+    geoms = list(coastline.geometries())
+
+    points = []
+    for geom in geoms:
+        if isinstance(geom, MultiLineString):
+            for line in geom.geoms:
+                points.extend(list(line.coords))
+        elif isinstance(geom, LineString):
+            points.extend(list(geom.coords))
+
+    return np.array(points)
+
+def calculate_dist_to_coast(lats, lons, resolution='10m'):
+    """
+    Calculates the minimum great-circle distance (km) from each (lat, lon) point
+    to the nearest coastline vertex.
+
+    Uses a KDTree built in 3D unit-vector (ECEF) space to avoid the angular-distance
+    bias that arises from naive KDTree on raw (lon, lat) degree coordinates.
+    At CCS latitudes (30–48°N), 1° lon ≈ 85 km but 1° lat ≈ 111 km, so a degree-space
+    tree systematically returns the wrong nearest vertex. Unit-vector space is isotropic
+    on the sphere, so the tree result is unbiased. One exact Haversine computation is
+    then run on the single nearest candidate to obtain km distance.
+
+    resolution: Natural Earth coastline detail — '10m' (~1-2 km vertex spacing),
+                '50m' (~10-20 km), '110m' (~100 km). Use '10m' for ML features
+                in coastal-gradient-sensitive applications like upwelling analysis.
+    """
+    from scipy.spatial import KDTree
+
+    # 1. Load coastline vertices as (N, 2) array of [lon, lat] in degrees.
+    coast_pts = get_coastline_points(resolution)
+
+    # 2. Convert coastline vertices to 3D unit vectors on the unit sphere.
+    # ECEF-style: x = cos(lat)*cos(lon), y = cos(lat)*sin(lon), z = sin(lat).
+    # Nearest neighbor in this space = nearest neighbor on the sphere surface,
+    # with no distortion from the irregular degree-to-km mapping.
+    coast_lons_r = np.radians(coast_pts[:, 0])
+    coast_lats_r = np.radians(coast_pts[:, 1])
+    coast_xyz = np.column_stack([
+        np.cos(coast_lats_r) * np.cos(coast_lons_r),
+        np.cos(coast_lats_r) * np.sin(coast_lons_r),
+        np.sin(coast_lats_r)
+    ])
+    tree = KDTree(coast_xyz)
+
+    # 3. Convert query points to the same 3D unit-vector space and query the tree.
+    lons_r = np.radians(lons)
+    lats_r = np.radians(lats)
+    query_xyz = np.column_stack([
+        np.cos(lats_r) * np.cos(lons_r),
+        np.cos(lats_r) * np.sin(lons_r),
+        np.sin(lats_r)
+    ])
+    _, dist_indices = tree.query(query_xyz)
+
+    # 4. Retrieve the nearest coastline vertex (lon, lat) for each query point.
+    nearest_coast_pts = coast_pts[dist_indices]
+
+    # 5. Compute exact Haversine distance (km) between each query point and its
+    # nearest coastline vertex. This is fast: one vectorized pass over N pairs.
+    def haversine(lon1, lat1, lon2, lat2):
+        lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
+        dlon = lon2 - lon1
+        dlat = lat2 - lat1
+        a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+        c = 2 * np.arcsin(np.sqrt(a))
+        return 6371 * c
+
+    dists_km = haversine(lons, lats, nearest_coast_pts[:, 0], nearest_coast_pts[:, 1])
+
+    return dists_km
