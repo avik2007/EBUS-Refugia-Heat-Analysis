@@ -2,6 +2,54 @@
 
 ---
 
+## 2026-05-02 (session 9) — MLOps audit complete; all 5 gaps fixed; main clean
+
+### Summary
+- Merged `feat/mlops-phase2` (PR #1) to main — full MLOps foundation (Phases 1–5), 46 tests
+- Fixed all 5 Gemini audit gaps on branch `fix/mlops-audit-gaps-2-5` (PR #2), merged to main — 54 tests
+- README updated with Data Coverage section (float census scripts) and backfill/test-suite blurbs
+
+### README updates
+- Added **Data Coverage** section documenting `09_ae_longterm_float_census.py` and `09b_ae_analyze_float_census.py` (unique-float density maps 1999–2024; domain-recommendation stats for californiav3)
+- Expanded MLOps section: backfill blurb (18 historical configs from audit logs) + 44-test count
+
+### Gap 1 (CRITICAL) — Fixed before merging PR #1
+**File:** `ArgoEBUSCloud/ebus_core/runner.py:run_analysis():dispatch_kwargs`
+- `spatial_ls_upper_bound` never passed to GPR shim; `lat_ls_bounds`/`lon_ls_bounds` silently ignored
+- Fix: compute `max(lat_ls_bounds[1], lon_ls_bounds[1])` and add to `dispatch_kwargs` when both set; omit for legacy null-bounds configs
+- 2 regression tests; commit `be013be`
+
+### PR #1 merged: `feat/mlops-phase2` → `main` (46 tests)
+
+### Gaps 2–5 — subagent-driven on `fix/mlops-audit-gaps-2-5` (PR #2)
+
+**Gap 3 — Physics depth cross-validation** (`config_schema.py`)
+- `_physics_depth_within_range` validator: `ohc_depth_top_m >= depth_range[0]`, `ohc_depth_bot_m <= depth_range[1]`
+- 3 tests; `AnalysisConfig` docstring updated; commit `a76c2ca`
+
+**Gap 5 — Backfill metadata** (`config_schema.py` + `backfill.py`)
+- `BackfillMetadataBlock` with `recovered_fields` / `assumed_fields`; field added to `AnalysisConfig`
+- `_parse_suffix` now returns `(dict, frozenset[recovered])` — eliminates duplicate token-detection in `backfill_configs`
+- 18 YAMLs regenerated; 2 tests; commits `8785cca`, `f0cc102`
+
+**Gap 4 — Centralize fmt_dec** (`ae_utils.py` + `runner.py` + `backfill.py`)
+- `fmt_dec` public in `ae_utils`; `runner._fmt_dec` deleted; `backfill._infer_s3_path` inline closure deleted
+- 1 test; commit `49492b5`
+
+**Gap 2 — Registry status field** (`manifest.py` + `runner.py`)
+- `status: "finalized"/"incomplete"` on every registry entry; checks audit CSV on disk post-dispatch
+- Non-dict dispatch result forces `"incomplete"` unconditionally
+- 2 tests; commits `8acdb1c`, `6bed512`
+
+### PR #2 merged: `fix/mlops-audit-gaps-2-5` → `main` (54 tests)
+All Gemini audit gaps closed. No open issues in MLOps layer.
+
+### State after session
+- Branch: `main` — 54 tests passing
+- Float census scripts (`09`, `09b`, notebook) still untracked — science work, not yet committed
+
+---
+
 ## 2026-04-30 (session 8) — MLOps Foundation Phase 5: Docs complete
 
 Phase 5 fully complete on branch `feat/mlops-phase2`. 4 doc changes written.

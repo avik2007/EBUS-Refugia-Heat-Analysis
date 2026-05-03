@@ -1,23 +1,19 @@
-## 2026-04-30 (session 8) — [DONE] MLOps Phase 5 Complete — Ready to Commit
+## 2026-05-02 — [DONE] MLOps Foundation + All Gemini Audit Gaps — COMPLETE
 
-**Status:** Phase 5 COMPLETE. All docs written. 44 tests still passing.
+**Status:** COMPLETE. main has 54 tests. All 5 Gemini audit gaps fixed and merged.
 
-Phase 4 + Phase 5 changes are uncommitted. Commit when ready:
-- `ArgoEBUSCloud/ebus_core/backfill.py` (new)
-- `ArgoEBUSCloud/10_ae_backfill_configs.py` (new)
-- `ArgoEBUSCloud/aebus_cli.py` (new)
-- `ArgoEBUSCloud/ebus_core/config_schema.py` (M)
-- `ArgoEBUSCloud/test_mlops_foundation.py` (M)
-- `configs/california/` (15 YAMLs, new)
-- `configs/californiav2/` (3 YAMLs, new)
-- `configs/README.md` (new)
-- `README.md` (M — MLOps section added)
-- `CLAUDE.md` (M — Config-Driven Workflow section added)
-- `ae_file_structure.txt` (M — 8 new files documented)
+- PR #1 (`feat/mlops-phase2`): Phases 1–5 + Gap 1 fix — merged 2026-05-02
+- PR #2 (`fix/mlops-audit-gaps-2-5`): Gaps 2–5 — merged 2026-05-02
+- Plan: `docs/superpowers/plans/2026-05-02-mlops-audit-gaps-2-5.md`
 
-Next: create commit on `feat/mlops-phase2` and optionally open PR to `main`.
+### Next: Science — californiav3 domain definition
+Before any new experiment runs, complete float census analysis:
+1. Run `09_ae_longterm_float_census.py` — builds density maps 1999–2024 (untracked, needs commit first)
+2. Run `09b_ae_analyze_float_census.py` — surfaces domain-recommendation stats
+3. Share output with Gemini to define `californiav3` domain bounds
+4. New run must use `aebus analyze` + a proper YAML config in `configs/californiav3/`
 
-Last updated: 2026-04-30 (session 8)
+Last updated: 2026-05-02 (session 9)
 
 ---
 
