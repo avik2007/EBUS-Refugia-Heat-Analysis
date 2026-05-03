@@ -15,6 +15,7 @@ import time as _time
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
 
+from ebus_core.ae_utils import fmt_dec
 from ebus_core.config_schema import AnalysisConfig, IngestionConfig
 from ebus_core.manifest import (
     ManifestCollisionError, append_registry, canonical_config_dict,
@@ -69,9 +70,9 @@ def derive_run_id(cfg: Union[IngestionConfig, AnalysisConfig]) -> str:
     region = cfg.region
     ds = cfg.date_start.strftime("%Y%m%d")
     de = cfg.date_end.strftime("%Y%m%d")
-    lat = _fmt_dec(cfg.lat_step)
-    lon = _fmt_dec(cfg.lon_step)
-    t = _fmt_dec(cfg.time_step)
+    lat = fmt_dec(cfg.lat_step)
+    lon = fmt_dec(cfg.lon_step)
+    t = fmt_dec(cfg.time_step)
     d0, d1 = cfg.depth_range
     # depth_range is Tuple[int, int] — integers format cleanly as "150", "400"
     # without needing decimal substitution, unlike lat/lon/time which are
@@ -81,24 +82,6 @@ def derive_run_id(cfg: Union[IngestionConfig, AnalysisConfig]) -> str:
         return base + cfg.gpr.run_suffix
     return base
 
-
-def _fmt_dec(x: float) -> str:
-    """
-    Convert a float to a filesystem-safe string by replacing '.' with '_'.
-
-    Examples: 0.5 -> '0_5', 10.0 -> '10_0', 0.25 -> '0_25'
-
-    WHY UNDERSCORE SUBSTITUTION:
-        Dots in directory or filename components confuse shell glob patterns
-        and some path-parsing utilities. The existing pipeline scripts (02, 05,
-        07) have always used this convention, so all AEResults/ paths and
-        run_id strings embed underscored floats. This helper centralises the
-        rule so every caller stays consistent with that legacy convention.
-    """
-    s = f"{x:g}"  # canonical short form: '0.5', '10', '0.25'
-    if "." not in s:
-        s = s + ".0"
-    return s.replace(".", "_")
 
 
 def build_manifest(

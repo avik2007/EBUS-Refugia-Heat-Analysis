@@ -21,6 +21,8 @@ from typing import List, Optional
 
 import yaml
 
+from ebus_core.ae_utils import fmt_dec
+
 
 # ---------------------------------------------------------------------------
 # Run-id parsing
@@ -182,16 +184,14 @@ def _infer_s3_path(region: str, date_start: date, date_end: date,
     # this analysis. The ingestion run_id omits the analysis suffix.
     # Input: config fields (region, dates, grid, depth)
     # Output: s3:// URI string following the existing naming convention
-    def fmt(v: float) -> str:
-        return str(v).replace(".", "_")
-
+    # (no local def fmt — use fmt_dec from ae_utils)
     d0, d1 = depth_range
     ds = date_start.strftime("%Y%m%d")
     de = date_end.strftime("%Y%m%d")
     ingest_id = (
         f"{region}_{ds}_{de}"
-        f"_res{fmt(lat_step)}x{fmt(lon_step)}"
-        f"_t{fmt(time_step)}_d{d0}_{d1}"
+        f"_res{fmt_dec(lat_step)}x{fmt_dec(lon_step)}"
+        f"_t{fmt_dec(time_step)}_d{d0}_{d1}"
     )
     return f"s3://argo-ebus-project-data-abm/{ingest_id}.parquet"
 

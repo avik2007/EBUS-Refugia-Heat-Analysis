@@ -272,6 +272,15 @@ def test_gpr_gibbs_auto_instantiates_kernel_block():
     assert g.kernel_rbf is None
 
 
+def test_fmt_dec_importable_from_ae_utils():
+    # fmt_dec must be importable directly from ae_utils (Gap 4 — centralize formatting)
+    from ebus_core.ae_utils import fmt_dec
+    assert fmt_dec(0.5) == "0_5"
+    assert fmt_dec(10.0) == "10_0"
+    assert fmt_dec(0.25) == "0_25"
+    assert fmt_dec(30.0) == "30_0"
+
+
 import textwrap
 
 from ebus_core.config_schema import load_config

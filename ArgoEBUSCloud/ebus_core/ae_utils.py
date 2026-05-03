@@ -356,6 +356,18 @@ def get_float_history_by_layer(region="california", pres_min=0, pres_max=100,
     return df[["platform_number", "lat", "lon", "time", "time_days"]]
 
 
+def fmt_dec(x: float) -> str:
+    # Convert a float to a filesystem-safe string by replacing '.' with '_'.
+    # Used to build canonical run_id strings and S3 parquet paths.
+    # Examples: 0.5 -> '0_5', 10.0 -> '10_0', 0.25 -> '0_25'
+    # WHY: dots in directory/filename components confuse shell globs and some
+    # path-parsing utilities. All AEResults/ paths embed underscored floats.
+    s = f"{x:g}"
+    if "." not in s:
+        s = s + ".0"
+    return s.replace(".", "_")
+
+
 def calculate_bin(value, step):
     """Generic binning helper."""
     return np.floor(value / step) * step
