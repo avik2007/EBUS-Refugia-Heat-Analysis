@@ -585,6 +585,68 @@ def test_run_analysis_dispatches_to_existing_function(tmp_path, monkeypatch):
     assert (tmp_path / "registry.jsonl").exists()
 
 
+def test_run_analysis_passes_spatial_ls_upper_bound(tmp_path, monkeypatch):
+    # Gap 1 regression: lat_ls_bounds=(1.0, 8.0) and lon_ls_bounds=(1.0, 6.0)
+    # must produce spatial_ls_upper_bound=8.0 in the dispatch kwargs.
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    kwargs["gpr"]["lat_ls_bounds"] = (1.0, 8.0)
+    kwargs["gpr"]["lon_ls_bounds"] = (1.0, 6.0)
+    cfg = AnalysisConfig(**kwargs)
+
+    captured_kwargs = {}
+
+    def fake_dispatch(**kw):
+        captured_kwargs.update(kw)
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"audit_{run_id}.csv").write_text("dummy,csv\n")
+        return {"audit_csv": str(out_dir / f"audit_{run_id}.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg)
+
+    # max(8.0, 6.0) == 8.0; lat upper bound is the binding constraint
+    assert captured_kwargs.get("spatial_ls_upper_bound") == 8.0
+
+
+def test_run_analysis_omits_spatial_ls_upper_bound_for_legacy(tmp_path, monkeypatch):
+    # Legacy configs with null bounds must NOT pass spatial_ls_upper_bound,
+    # so the script default (10.0) applies unchanged.
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    kwargs["gpr"]["lat_ls_bounds"] = None
+    kwargs["gpr"]["lon_ls_bounds"] = None
+    kwargs["legacy_backfill"] = True
+    cfg = AnalysisConfig(**kwargs)
+
+    captured_kwargs = {}
+
+    def fake_dispatch(**kw):
+        captured_kwargs.update(kw)
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"audit_{run_id}.csv").write_text("dummy,csv\n")
+        return {"audit_csv": str(out_dir / f"audit_{run_id}.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg)
+
+    assert "spatial_ls_upper_bound" not in captured_kwargs
+
+
 from ebus_core.runner import run_ingestion
 
 

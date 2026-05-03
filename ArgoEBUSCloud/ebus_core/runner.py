@@ -221,6 +221,16 @@ def run_analysis(
         "time_ls_bounds_days": cfg.gpr.time_ls_bounds_days,
         "run_suffix": cfg.gpr.run_suffix,
     }
+    # Derive the single spatial_ls_upper_bound the GPR function expects from the
+    # per-axis bounds stored in config. The physics engine takes one scalar upper
+    # bound for the spatial length-scale search; we use the looser (larger) of the
+    # two axes so neither lat nor lon is over-constrained. Omitting the key when
+    # bounds are null lets the script default (10.0) apply — correct for legacy
+    # configs that predate split-anisotropy bounds.
+    if cfg.gpr.lat_ls_bounds is not None and cfg.gpr.lon_ls_bounds is not None:
+        dispatch_kwargs["spatial_ls_upper_bound"] = max(
+            cfg.gpr.lat_ls_bounds[1], cfg.gpr.lon_ls_bounds[1]
+        )
 
     t0 = _time.time()
     dispatch_result = _call_run_diagnostic_inspection(**dispatch_kwargs)
