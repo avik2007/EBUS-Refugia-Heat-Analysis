@@ -219,21 +219,15 @@ def run_analysis(
     dispatch_result = _call_run_diagnostic_inspection(**dispatch_kwargs)
     duration = _time.time() - t0
 
-    audit_csv = (
-        dispatch_result.get("audit_csv")
-        if isinstance(dispatch_result, dict)
-        else str(aelogs_dir / f"audit_{run_id}.csv")
-    )
-
-    # Determine run completeness: "finalized" if the audit CSV landed on disk,
-    # "incomplete" if the dispatch returned but outputs are missing. The latter
-    # can happen when a Dask job crashes after returning a partial result dict.
-    # Writing "incomplete" to the registry prevents silent ghost-success entries.
-    status = (
-        "finalized"
-        if audit_csv and Path(audit_csv).exists()
-        else "incomplete"
-    )
+    # Non-dict return is not a recognized success contract (legacy scripts may
+    # return None or a plain value). Force "incomplete" so a broken return
+    # doesn't accidentally mark a run as finalized via a guessed path.
+    if isinstance(dispatch_result, dict):
+        audit_csv = dispatch_result.get("audit_csv")
+        status = "finalized" if audit_csv and Path(audit_csv).exists() else "incomplete"
+    else:
+        audit_csv = str(aelogs_dir / f"audit_{run_id}.csv")
+        status = "incomplete"
 
     snapshots_dir = str(Path(cfg.outputs.aeplots_dir) / f"snapshot_{run_id}")
 
