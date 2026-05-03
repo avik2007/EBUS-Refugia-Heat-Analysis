@@ -224,6 +224,17 @@ def run_analysis(
         if isinstance(dispatch_result, dict)
         else str(aelogs_dir / f"audit_{run_id}.csv")
     )
+
+    # Determine run completeness: "finalized" if the audit CSV landed on disk,
+    # "incomplete" if the dispatch returned but outputs are missing. The latter
+    # can happen when a Dask job crashes after returning a partial result dict.
+    # Writing "incomplete" to the registry prevents silent ghost-success entries.
+    status = (
+        "finalized"
+        if audit_csv and Path(audit_csv).exists()
+        else "incomplete"
+    )
+
     snapshots_dir = str(Path(cfg.outputs.aeplots_dir) / f"snapshot_{run_id}")
 
     manifest = build_manifest(
@@ -239,7 +250,7 @@ def run_analysis(
     )
     write_manifest(manifest, manifest_path)
     if registry_path is not None:
-        append_registry(manifest, registry_path, manifest_path)
+        append_registry(manifest, registry_path, manifest_path, status=status)
 
     return {
         "run_id": run_id,

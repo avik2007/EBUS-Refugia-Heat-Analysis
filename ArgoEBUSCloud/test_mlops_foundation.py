@@ -479,7 +479,7 @@ def test_append_registry_appends_one_line(tmp_path):
     parsed = _json.loads(lines[0])
     assert set(parsed.keys()) == {
         "run_id", "kind", "config_hash", "created_at",
-        "region", "depth_range", "manifest_path",
+        "region", "depth_range", "manifest_path", "status",
     }
     assert parsed["region"] == "californiav2"
     assert parsed["depth_range"] == [0, 100]
@@ -683,6 +683,59 @@ def test_run_analysis_omits_spatial_ls_upper_bound_for_legacy(tmp_path, monkeypa
     run_analysis(cfg)
 
     assert "spatial_ls_upper_bound" not in captured_kwargs
+
+
+def test_run_analysis_registry_status_finalized_when_audit_exists(tmp_path, monkeypatch):
+    # When dispatch returns a path that exists on disk, registry status = "finalized"
+    import json as _json
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    def fake_dispatch(**kw):
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        audit = out_dir / f"audit_{run_id}.csv"
+        audit.write_text("dummy,csv\n")
+        return {"audit_csv": str(audit)}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    line = _json.loads((tmp_path / "registry.jsonl").read_text().strip())
+    assert line["status"] == "finalized"
+
+
+def test_run_analysis_registry_status_incomplete_when_audit_missing(tmp_path, monkeypatch):
+    # When dispatch returns a path that does NOT exist, registry status = "incomplete"
+    import json as _json
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    def fake_dispatch(**kw):
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        # Return a path that does NOT exist — simulates a partial/crashed run
+        return {"audit_csv": str(out_dir / "ghost_audit.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    line = _json.loads((tmp_path / "registry.jsonl").read_text().strip())
+    assert line["status"] == "incomplete"
 
 
 from ebus_core.runner import run_ingestion
