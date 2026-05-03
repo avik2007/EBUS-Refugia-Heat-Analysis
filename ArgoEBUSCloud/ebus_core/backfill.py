@@ -116,13 +116,31 @@ def _parse_suffix(suffix: str, time_step: float) -> dict:
     m_step = re.search(r"t\d+s(\d+)", sfx)
     step_size_days = int(m_step.group(1)) if m_step else int(time_step)
 
-    return {
-        "mode": mode,
-        "kernel_type": kernel_type,
-        "window_size_days": window_size_days,
-        "min_bins": min_bins,
-        "step_size_days": step_size_days,
-    }
+    # recovered: GPR field names whose values were read from the suffix,
+    # not defaulted. Callers use this to populate backfill_metadata.
+    # Uses truthiness of the already-computed regex match objects — no new searches.
+    recovered: set = set()
+    if "2d" in sfx:
+        recovered.add("gpr.mode")
+    if "rbf" in sfx:
+        recovered.add("gpr.kernel_type")
+    if m_win:
+        recovered.add("gpr.window_size_days")
+    if m_bins:
+        recovered.add("gpr.min_bins")
+    if m_step:
+        recovered.add("gpr.step_size_days")
+
+    return (
+        {
+            "mode": mode,
+            "kernel_type": kernel_type,
+            "window_size_days": window_size_days,
+            "min_bins": min_bins,
+            "step_size_days": step_size_days,
+        },
+        frozenset(recovered),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -223,43 +241,17 @@ def backfill_configs(
         depth_range: tuple = parsed["depth_range"]
         run_suffix: str = parsed["run_suffix"]
 
-        gpr_recoverable = _parse_suffix(run_suffix, time_step)
+        gpr_recoverable, gpr_suffix_recovered = _parse_suffix(run_suffix, time_step)
 
-        # Determine which GPR fields were explicitly recovered from the suffix
-        # vs which fell back to pipeline defaults. This feeds backfill_metadata.
-        sfx_lower = run_suffix.lower()
-        gpr_recovered = []
-        gpr_assumed = []
-
-        # mode: explicit only if "2d" is present (otherwise 3D is assumed)
-        if "2d" in sfx_lower:
-            gpr_recovered.append("gpr.mode")
-        else:
-            gpr_assumed.append("gpr.mode")
-
-        # kernel_type: explicit only if "rbf" is present
-        if "rbf" in sfx_lower:
-            gpr_recovered.append("gpr.kernel_type")
-        else:
-            gpr_assumed.append("gpr.kernel_type")
-
-        # window_size_days: explicit only if w{N} pattern present
-        if re.search(r"w\d+", sfx_lower):
-            gpr_recovered.append("gpr.window_size_days")
-        else:
-            gpr_assumed.append("gpr.window_size_days")
-
-        # min_bins: explicit only if minbins{N} pattern present
-        if re.search(r"minbins\d+", sfx_lower):
-            gpr_recovered.append("gpr.min_bins")
-        else:
-            gpr_assumed.append("gpr.min_bins")
-
-        # step_size_days: explicit only if t{X}s{N} pattern present
-        if re.search(r"t\d+s\d+", sfx_lower):
-            gpr_recovered.append("gpr.step_size_days")
-        else:
-            gpr_assumed.append("gpr.step_size_days")
+        # GPR_SUFFIX_FIELDS: the five fields _parse_suffix classifies.
+        # Any field not in gpr_suffix_recovered was not present in the suffix
+        # and fell back to a pipeline default.
+        GPR_SUFFIX_FIELDS = frozenset({
+            "gpr.mode", "gpr.kernel_type", "gpr.window_size_days",
+            "gpr.min_bins", "gpr.step_size_days",
+        })
+        gpr_recovered = list(gpr_suffix_recovered)
+        gpr_assumed = [f for f in GPR_SUFFIX_FIELDS if f not in gpr_suffix_recovered]
 
         noise_vals = _read_noise_vals(aelog_dir, run_id)
 
@@ -267,7 +259,6 @@ def backfill_configs(
         if noise_vals is not None:
             gpr_recovered.append("gpr.noise_vals_audit")
 
-        # All run_id-derived fields are always recovered
         run_id_recovered = [
             "region", "date_start", "date_end",
             "lat_step", "lon_step", "time_step", "depth_range",
