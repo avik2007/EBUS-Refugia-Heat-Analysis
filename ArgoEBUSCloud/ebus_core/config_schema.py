@@ -378,6 +378,28 @@ class PhysicsParamsBlock(BaseModel):
         return self
 
 
+class BackfillMetadataBlock(BaseModel):
+    """
+    Provenance record written by the backfill script into every legacy config.
+
+    recovered_fields: fields whose values were parsed directly from the run_id
+        string or audit CSV — these are known to be accurate.
+    assumed_fields: fields that fell back to pipeline defaults because the
+        run_id / suffix contained no explicit value — these could differ from
+        what was actually used in the original run.
+
+    The distinction prevents audit readers from treating all backfilled values
+    equally: recovered fields are trustworthy, assumed fields carry uncertainty.
+    Unrecoverable fields (noise_val, *_ls_bounds) are written as null in the
+    config and do not appear in either list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    recovered_fields: List[str] = Field(default_factory=list)
+    assumed_fields: List[str] = Field(default_factory=list)
+
+
 class AnalysisInputBlock(BaseModel):
     """
     Pointer to the parquet source for an analysis run.
@@ -477,6 +499,11 @@ class AnalysisConfig(BaseModel):
     # When True, gpr.noise_val, gpr.time_ls_bounds_days, gpr.lat_ls_bounds, and
     # gpr.lon_ls_bounds may be null. The bin-aliasing time_ls check is also skipped.
     legacy_backfill: bool = False
+
+    # backfill_metadata: populated by 10_ae_backfill_configs.py to record which
+    # fields were recovered from the run_id vs assumed from pipeline defaults.
+    # None for configs written by hand or by the MLOps runner (not backfilled).
+    backfill_metadata: Optional[BackfillMetadataBlock] = None
 
     description: str = ""
 

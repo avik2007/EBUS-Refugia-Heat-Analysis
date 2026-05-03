@@ -40,3 +40,19 @@ gpr:
 description: backfilled from california_20150101_20151231_res0_5x0_5_t30_0_d0_100_3dmatern_w45_t2s30
   on 2026-04-30; noise_val / time_ls_bounds_days / lat_ls_bounds / lon_ls_bounds unrecoverable
   from pre-manifest run, treat as legacy
+backfill_metadata:
+  recovered_fields:
+  - region
+  - date_start
+  - date_end
+  - lat_step
+  - lon_step
+  - time_step
+  - depth_range
+  - gpr.window_size_days
+  - gpr.step_size_days
+  - gpr.noise_vals_audit
+  assumed_fields:
+  - gpr.mode
+  - gpr.kernel_type
+  - gpr.min_bins

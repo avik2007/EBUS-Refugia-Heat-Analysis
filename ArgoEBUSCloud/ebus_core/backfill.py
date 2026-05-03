@@ -224,7 +224,55 @@ def backfill_configs(
         run_suffix: str = parsed["run_suffix"]
 
         gpr_recoverable = _parse_suffix(run_suffix, time_step)
+
+        # Determine which GPR fields were explicitly recovered from the suffix
+        # vs which fell back to pipeline defaults. This feeds backfill_metadata.
+        sfx_lower = run_suffix.lower()
+        gpr_recovered = []
+        gpr_assumed = []
+
+        # mode: explicit only if "2d" is present (otherwise 3D is assumed)
+        if "2d" in sfx_lower:
+            gpr_recovered.append("gpr.mode")
+        else:
+            gpr_assumed.append("gpr.mode")
+
+        # kernel_type: explicit only if "rbf" is present
+        if "rbf" in sfx_lower:
+            gpr_recovered.append("gpr.kernel_type")
+        else:
+            gpr_assumed.append("gpr.kernel_type")
+
+        # window_size_days: explicit only if w{N} pattern present
+        if re.search(r"w\d+", sfx_lower):
+            gpr_recovered.append("gpr.window_size_days")
+        else:
+            gpr_assumed.append("gpr.window_size_days")
+
+        # min_bins: explicit only if minbins{N} pattern present
+        if re.search(r"minbins\d+", sfx_lower):
+            gpr_recovered.append("gpr.min_bins")
+        else:
+            gpr_assumed.append("gpr.min_bins")
+
+        # step_size_days: explicit only if t{X}s{N} pattern present
+        if re.search(r"t\d+s\d+", sfx_lower):
+            gpr_recovered.append("gpr.step_size_days")
+        else:
+            gpr_assumed.append("gpr.step_size_days")
+
         noise_vals = _read_noise_vals(aelog_dir, run_id)
+
+        # noise_vals_audit: recovered if audit CSV existed and had noise_val column
+        if noise_vals is not None:
+            gpr_recovered.append("gpr.noise_vals_audit")
+
+        # All run_id-derived fields are always recovered
+        run_id_recovered = [
+            "region", "date_start", "date_end",
+            "lat_step", "lon_step", "time_step", "depth_range",
+        ]
+        all_recovered = run_id_recovered + gpr_recovered
         s3_path = _infer_s3_path(
             region, date_start, date_end, lat_step, lon_step, time_step, depth_range
         )
@@ -262,6 +310,10 @@ def backfill_configs(
                 "noise_val / time_ls_bounds_days / lat_ls_bounds / lon_ls_bounds "
                 "unrecoverable from pre-manifest run, treat as legacy"
             ),
+            "backfill_metadata": {
+                "recovered_fields": all_recovered,
+                "assumed_fields": gpr_assumed,
+            },
         }
 
         # Write to configs/{region}/{run_id}.yaml

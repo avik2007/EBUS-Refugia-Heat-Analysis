@@ -952,3 +952,58 @@ def test_backfilled_configs_round_trip(tmp_path):
     # unrecoverable bounds are null.
     assert cfg.gpr.noise_val is None
     assert cfg.gpr.time_ls_bounds_days is None
+
+
+def test_backfill_metadata_recovered_fields_present(tmp_path):
+    # backfill_configs must write a backfill_metadata block with recovered_fields
+    # listing fields extracted from the run_id and suffix.
+    import csv as csv_mod
+    from ebus_core.backfill import backfill_configs
+    from ebus_core.config_schema import load_config
+
+    aelogs = tmp_path / "aelogs"
+    run_id = "california_20150101_20151231_res0_5x0_5_t30_0_d0_100_3dmatern_w45"
+    run_dir = aelogs / run_id
+    run_dir.mkdir(parents=True)
+    # Write a minimal audit CSV with noise_val so noise_vals_audit is recovered
+    audit = run_dir / f"audit_{run_id}.csv"
+    with audit.open("w", newline="") as f:
+        w = csv_mod.writer(f)
+        w.writerow(["noise_val"])
+        w.writerow([0.001])
+
+    configs_root = tmp_path / "configs"
+    backfill_configs(aelogs, configs_root)
+
+    cfg = load_config(configs_root / "california" / f"{run_id}.yaml")
+    assert cfg.backfill_metadata is not None
+    # Fields parsed from the run_id must appear in recovered_fields
+    for field in ["region", "date_start", "date_end", "lat_step", "lon_step",
+                  "time_step", "depth_range"]:
+        assert field in cfg.backfill_metadata.recovered_fields, \
+            f"{field} missing from recovered_fields"
+
+
+def test_backfill_metadata_assumed_fields_present(tmp_path):
+    # When mode/kernel_type/window_size_days are not in the suffix they are
+    # assumed defaults; they must appear in assumed_fields, not recovered_fields.
+    from ebus_core.backfill import backfill_configs
+    from ebus_core.config_schema import load_config
+
+    aelogs = tmp_path / "aelogs"
+    # Suffix has no 2d/rbf/w{N} tokens — all GPR fields default
+    run_id = "california_20150101_20151231_res0_5x0_5_t30_0_d0_100"
+    run_dir = aelogs / run_id
+    run_dir.mkdir(parents=True)
+
+    configs_root = tmp_path / "configs"
+    backfill_configs(aelogs, configs_root)
+
+    cfg = load_config(configs_root / "california" / f"{run_id}.yaml")
+    assert cfg.backfill_metadata is not None
+    # mode/kernel_type/window_size_days fell back to defaults — must be assumed
+    for field in ["gpr.mode", "gpr.kernel_type", "gpr.window_size_days"]:
+        assert field in cfg.backfill_metadata.assumed_fields, \
+            f"{field} missing from assumed_fields"
+    # run_id-derived fields must NOT appear in assumed
+    assert "region" not in cfg.backfill_metadata.assumed_fields
