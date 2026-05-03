@@ -2,6 +2,38 @@
 
 ---
 
+## 2026-04-30 (session 8b) — Gemini Audit Gap Plan written to todo
+
+Read Gemini's audit verdict and analysed all 5 gaps against the live code. Wrote a
+detailed fix plan (with exact file:line targets, code snippets, and TDD test specs)
+to the top of `AE_claude_todo.md`. No code changed.
+
+- Gap 1 (CRITICAL): `runner.py:dispatch_kwargs` never passes `spatial_ls_upper_bound`
+  — config's `lat/lon_ls_bounds` silently ignored; physics engine defaults to 10.
+- Gap 2 (MEDIUM): registry appended before verifying science outputs exist on disk.
+- Gap 3 (LOW-MEDIUM): `PhysicsParamsBlock.ohc_depth_*` not cross-validated against `depth_range`.
+- Gap 4 (MEDIUM): `_fmt_dec` / `derive_run_id` private to `runner.py`, not centralized.
+- Gap 5 (LOW): backfill null fields explained only in description string, not structured.
+
+PR #1 open: https://github.com/avik2007/EBUS-Refugia-Heat-Analysis/pull/1
+Gap 1 must land before any new californiav3 science runs.
+
+---
+
+## 2026-04-30 — Gemini MLOps Audit & Gap Analysis
+
+Gemini performed a comprehensive audit of the Phase 1–5 MLOps implementation (branch `feat/mlops-phase2`). Five critical gaps were identified:
+
+- **Shim Mismatch in `runner.py`:** The shim currently ignores split-anisotropy YAML bounds (`lat_ls_bounds`, `lon_ls_bounds`) and falls back to legacy defaults. **FIX REQUIRED** to pass `max(lat, lon)` to `spatial_ls_upper_bound`.
+- **Registry Reliability:** Runs are appended to the registry upon start without verifying successful completion or `manifest.json` write. **FIX REQUIRED** for a "Finalized" flag.
+- **Validation Consistency:** Depth range ordering (`top < bottom`) is not strictly enforced in `AnalysisConfig` or `PhysicsParamsBlock`.
+- **Logic Duplication:** `derive_run_id` and `_fmt_dec` are duplicated in `runner.py` and legacy scripts. **REFACTOR REQUIRED** to centralize in `ae_utils.py`.
+- **Backfill Accuracy:** The backfill tool assumes defaults for missing fields. **IMPROVEMENT REQUIRED** to explicitly mark "recovered" vs "assumed" fields in a metadata section.
+
+Full report: `docs/superpowers/specs/2026-04-30-mlops-gemini-audit-verdict.md`
+
+---
+
 ## 2026-04-30 (session 8) — MLOps Foundation Phase 5: Docs complete
 
 Phase 5 fully complete on branch `feat/mlops-phase2`. 4 doc changes written.

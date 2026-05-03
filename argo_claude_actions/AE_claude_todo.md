@@ -1,3 +1,133 @@
+# ⚠️ GEMINI MLOPS AUDIT — 5 GAPS TO FIX (2026-04-30) [PLANNED, NOT STARTED]
+**Spec:** `docs/superpowers/specs/2026-04-30-mlops-gemini-audit-verdict.md`
+**Do NOT run new science experiments until Gap 1 is fixed.**
+**Plan is below — resume here next session.**
+
+---
+
+## [NEXT] MLOps Audit Fixes — 5 Gaps (Priority Order)
+
+### Gap 1 — CRITICAL: Kwarg mismatch in runner.py (spatial bounds ignored)
+
+**File:** `ArgoEBUSCloud/ebus_core/runner.py:run_analysis():dispatch_kwargs`
+**File:** `ArgoEBUSCloud/05_ae_update_tomatern0.5.py:run_diagnostic_inspection()`
+
+**Problem:** `run_diagnostic_inspection` expects `spatial_ls_upper_bound` (single scalar upper
+bound, default=10). `runner.py:dispatch_kwargs` never passes it. So `lat_ls_bounds` and
+`lon_ls_bounds` from the config are silently ignored; the physics engine always uses 10.
+
+**Fix:**
+```python
+# In run_analysis():dispatch_kwargs, add:
+"spatial_ls_upper_bound": (
+    max(cfg.gpr.lat_ls_bounds[1], cfg.gpr.lon_ls_bounds[1])
+    if cfg.gpr.lat_ls_bounds is not None and cfg.gpr.lon_ls_bounds is not None
+    else None  # omit = script default (10) applies
+),
+```
+Then update `_call_run_diagnostic_inspection` shim to filter out `None`-valued keys before
+forwarding to the real function (or pass only when not None).
+
+**Test:** Add test asserting that when config has `lat_ls_bounds=(1.0, 8.0)` and
+`lon_ls_bounds=(1.0, 6.0)`, the shim receives `spatial_ls_upper_bound=8.0`.
+
+---
+
+### Gap 2 — MEDIUM: Ghost successes in registry
+
+**File:** `ArgoEBUSCloud/ebus_core/runner.py:run_analysis()`
+**File:** `ArgoEBUSCloud/ebus_core/manifest.py:append_registry()`
+
+**Problem:** `append_registry` fires after `write_manifest` but neither checks that the
+science outputs (audit CSV, snapshots) actually landed on disk. A Dask crash that returns
+a partial result would register as a successful run.
+
+**Fix:** After `dispatch_result`, verify the audit CSV exists on disk before writing the
+manifest. Add a `status` field to registry entries: `"finalized"` = outputs verified,
+`"incomplete"` = manifest written but outputs missing.
+
+```python
+# In run_analysis(), after dispatch:
+if audit_csv and not Path(audit_csv).exists():
+    status = "incomplete"
+else:
+    status = "finalized"
+# Pass status into build_manifest → outputs block → registry line
+```
+
+**Test:** Monkeypatch dispatch to return a path that doesn't exist; assert registry `status="incomplete"`.
+
+---
+
+### Gap 3 — LOW-MEDIUM: Incomplete depth validation
+
+**File:** `ArgoEBUSCloud/ebus_core/config_schema.py`
+
+**Problem:** `IngestionConfig` and `AnalysisConfig` both have `_depth_range_ordered`, but
+`PhysicsParamsBlock.ohc_depth_top_m` / `ohc_depth_bot_m` are not cross-validated against
+`depth_range`. Non-physical bounds (e.g., ohc_top > depth_range[1]) can be written silently.
+
+**Fix:** Add an `AnalysisConfig` model-level validator that checks:
+```python
+if cfg.physics.ohc_depth_top_m is not None:
+    assert cfg.physics.ohc_depth_top_m >= cfg.depth_range[0]
+if cfg.physics.ohc_depth_bot_m is not None:
+    assert cfg.physics.ohc_depth_bot_m <= cfg.depth_range[1]
+```
+
+**Test:** Verify config with `ohc_depth_bot_m > depth_range[1]` raises ValidationError.
+
+---
+
+### Gap 4 — MEDIUM: _fmt_dec / derive_run_id not centralized
+
+**Files:** `ArgoEBUSCloud/ebus_core/runner.py`, `ArgoEBUSCloud/ebus_core/ae_utils.py`
+
+**Problem:** `_fmt_dec` (float → filesystem-safe string) is private to `runner.py`. Same
+logic exists in legacy scripts. Drift between them would silently break the config↔result
+naming link.
+
+**Fix:** Move `_fmt_dec` and `derive_run_id` to `ebus_core/ae_utils.py`. Re-import in
+`runner.py` (no behavior change). Legacy scripts can optionally import from there too.
+
+**Test:** Existing `test_derive_run_id_*` tests cover behavior; just update import path.
+
+---
+
+### Gap 5 — LOW: Backfill metadata not structured
+
+**Files:** `configs/california/*.yaml`, `configs/californiav2/*.yaml`
+
+**Problem:** Null fields in backfilled YAMLs are explained only in the `description` string.
+No structured `metadata` block distinguishes "recovered" fields from "assumed defaults."
+
+**Fix:** Add to each backfilled YAML:
+```yaml
+metadata:
+  recovered_fields: [region, date_start, date_end, lat_step, lon_step, time_step,
+                     depth_range, run_suffix, noise_vals_audit]
+  assumed_fields: [noise_val, time_ls_bounds_days, lat_ls_bounds, lon_ls_bounds]
+  backfill_date: "2026-04-30"
+  source_run_id: "<run_id>"
+```
+Update `backfill.py:reconstruct_analysis_config()` to emit this block.
+Update `config_schema.py` to accept optional `metadata: dict` (extra="ignore" or typed).
+
+**Test:** Verify round-trip: backfill YAML parses cleanly and `metadata.assumed_fields`
+contains the expected keys.
+
+---
+
+**Execution notes:**
+- Gap 1 must land before any new analysis runs on californiav3.
+- Gaps 2–5 can follow in order; each is independent.
+- TDD: write failing test first for each gap, then fix.
+- Commit each gap separately (clear audit trail on the PR).
+
+Last updated: 2026-04-30 (session 8)
+
+---
+
 ## 2026-04-30 (session 8) — [DONE] MLOps Phase 5 Complete — Ready to Commit
 
 **Status:** Phase 5 COMPLETE. All docs written. 44 tests still passing.
