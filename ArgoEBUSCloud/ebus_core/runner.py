@@ -48,7 +48,7 @@ def derive_run_id(cfg: Union[IngestionConfig, AnalysisConfig]) -> str:
               - cfg.region: string region tag, e.g. "california"
               - cfg.date_start/date_end: datetime objects, formatted YYYYMMDD
               - cfg.lat_step/lon_step/time_step: floats; the decimal point is
-                replaced with underscore via _fmt_dec (filesystem-safe)
+                replaced with underscore via fmt_dec (filesystem-safe)
               - cfg.depth_range: Tuple[int, int] bounding the depth layer
               - cfg.gpr.run_suffix (AnalysisConfig only): kernel/window tag
                 such as "_3dmatern_w45". The leading underscore is part of
