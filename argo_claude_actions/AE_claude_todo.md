@@ -1,3 +1,40 @@
+## 2026-05-03 — [ACTIVE] californiav3 Matérn Baseline Run (Path A)
+
+**Context:** Float census done (09c, committed). californiav3 bounds confirmed in `ae_utils.py`
+(Lat [30,48], Lon [-135,-115]). Gibbs kernel deferred until baseline validates the domain.
+
+**Steps:**
+1. [x] Write 3 analysis YAMLs + 3 ingestion YAMLs in `configs/californiav3/` — all validate clean.
+2. [x] Run ingestion — all 3 parquets on S3, registered in run_registry.jsonl.
+3. [x] Run GPR — all 3 layers complete (session 11, 2026-05-03).
+       YAML fix applied: `time_ls_bounds_days: [15.0, 45.0]` in all 3 analysis configs.
+4. [x] Review results:
+       Skin  0-100m:   median RMSRE 4.25%, max 6.45%, 27/35 pass. Z chronic 0.5-0.9 + spikes 5.77, 4.35.
+       Source 150-400m: median RMSRE 3.05%, max 5.38%, 32/35 pass. Z chronic 0.5-0.9 + spikes 5.14, 4.94 (Aug-Sep).
+       Background 500-1000m: median RMSRE 2.50%, max 3.92%, 35/35 pass. Z chronic low + extreme spikes 11.35, 9.28, 9.11 (Blob onset).
+       Domain fix validated: Source improved from 8.13% (californiav2) → 3.05%.
+       Cross-layer Z pattern: stationary Matérn cannot adapt near shelf-break — dist_to_coast Gibbs motivated.
+5. [ ] Share results with Gemini for science verdict before proceeding to Gibbs.
+       Key questions:
+       - Confirm Background Z-spikes (9-11) are Pacific Blob onset (Jan-Feb + Sep 2015).
+       - Confirm Background mid-year Ratio >1 (anomalous for deep layer — expected zonal).
+       - Green-light dist_to_coast as l(x) form for GibbsKernel.
+
+**Pipeline fixes landed this session (54 tests still passing):**
+- `02_ae_cloud_run.py`: `run_ingestion_pipeline()` wrapper (absorbs runner extras)
+- `02_ae_cloud_run.py`: ERDDAP URL — encode `>/%3E`, `</%3C`; point to `erddap.ifremer.fr`
+- `02_ae_cloud_run.py`: try/finally cluster cleanup wraps all post-cluster code
+- `02_ae_cloud_run.py`: `client.run(_warm_cartopy_cache)` pre-warms coastline on workers
+- `05_ae_update_tomatern0.5.py`: `**_` absorbs unknown runner kwargs (mode, kernel_type, etc.)
+
+**Gibbs kernel (deferred):** Implement after baseline confirms domain is healthy.
+Spec: `docs/superpowers/specs/2026-04-26-rg-gibbs-l-x-directive.md`
+Gap: `GibbsKernel` class missing from `argoebus_gp_physics.py`; runner dispatch ready.
+
+Last updated: 2026-05-03 (session 10)
+
+---
+
 ## 2026-05-02 — [DONE] MLOps Foundation + All Gemini Audit Gaps — COMPLETE
 
 **Status:** COMPLETE. main has 54 tests. All 5 Gemini audit gaps fixed and merged.
@@ -5,13 +42,6 @@
 - PR #1 (`feat/mlops-phase2`): Phases 1–5 + Gap 1 fix — merged 2026-05-02
 - PR #2 (`fix/mlops-audit-gaps-2-5`): Gaps 2–5 — merged 2026-05-02
 - Plan: `docs/superpowers/plans/2026-05-02-mlops-audit-gaps-2-5.md`
-
-### Next: Science — californiav3 domain definition
-Before any new experiment runs, complete float census analysis:
-1. Run `09_ae_longterm_float_census.py` — builds density maps 1999–2024 (untracked, needs commit first)
-2. Run `09b_ae_analyze_float_census.py` — surfaces domain-recommendation stats
-3. Share output with Gemini to define `californiav3` domain bounds
-4. New run must use `aebus analyze` + a proper YAML config in `configs/californiav3/`
 
 Last updated: 2026-05-02 (session 9)
 

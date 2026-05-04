@@ -57,78 +57,110 @@ def run_cloud_pipeline(region="california", lat_step=0.5, lon_step=0.5, time_ste
     client = Client(cluster)
     print(f"✅ Cloud Cluster Ready! Dashboard: {client.dashboard_link}")
 
-    # --- 3. DYNAMIC API QUERY ---
-    print(f"\n🗺️ Step 2: Requesting {region.upper()} Data ({config['start_date']} to {config['end_date']})...")
-    
-    erddap_url = (
-        f"https://www.ifremer.fr/erddap/tabledap/ArgoFloats.csv?"
-        f"platform_number,time,latitude,longitude,pres,temp,psal"
-        f"&latitude>={config['lat'][0]}&latitude<={config['lat'][1]}"
-        f"&longitude>={config['lon'][0]}&longitude<={config['lon'][1]}"
-        f"&time>={config['start_date']}T00:00:00Z"
-        f"&time<={config['end_date']}T23:59:59Z"
-    )
-    
-    # Read CSV stream from ERDDAP
-    ddf = dd.read_csv(erddap_url, skiprows=[1], blocksize=None)
-    ddf = ddf.repartition(npartitions=n_workers * 4)
-
-    # --- 4. DATA CLEANING & DEPTH CONVERSION ---
-    print("🌉 Step 3: Formatting and Converting Pressure to Depth...")
-    
-    ddf = ddf.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
-    
-    # Calculate exact Depth from Pressure using TEOS-10
-    ddf['depth'] = gsw.z_from_p(ddf['pres'], ddf['lat']) * -1
-
-    # Format Datetime and baseline for 'time_days'
-    ddf['time'] = dd.to_datetime(ddf['time'], utc=True)
-    baseline = pd.Timestamp('1999-01-01', tz='UTC')
-    ddf['time_days'] = (ddf['time'] - baseline).dt.total_seconds() / 86400
-
-    # --- 5. DISTRIBUTED PHYSICS ---
-    res = config["resolutions"]
-    d_min, d_max = config["depth_range"]
-    
-    print(f"🚀 Step 4: Distributing Physics (Depth: {d_min}-{d_max}m, Res: {res['lat_step']}x{res['lon_step']})...")
-    
-    # Define meta for Dask output schema
-    meta = pd.DataFrame({
-        'time_bin': pd.Series(dtype='float64'),
-        'lat_bin': pd.Series(dtype='float64'),
-        'lon_bin': pd.Series(dtype='float64'),
-        'ohc': pd.Series(dtype='float64'),
-        'ohc_per_m': pd.Series(dtype='float64'),
-        'n_raw_points': pd.Series(dtype='int64'),
-        'platform_number': pd.Series(dtype='str'),
-        'dist_to_coast_km': pd.Series(dtype='float64')
-    })
-
-    # Apply physics function across cluster
-    ddf_binned = ddf.map_partitions(
-        estimate_ohc_from_raw_bins, 
-        resolution_lat=res['lat_step'], 
-        resolution_lon=res['lon_step'], 
-        resolution_time_days=res['time_step'],
-        depth_min=d_min,  # CRITICAL: Respecting chosen depth
-        depth_max=d_max,  # CRITICAL: Respecting chosen depth
-        meta=meta
-    )
-
-    # --- 6. EXECUTION ---
-    print(f"\n💾 Step 5: Computing and Saving to Data Lake...")
-    
+    # Wrap everything after cluster creation in try/finally so the cluster is
+    # always shut down even if ERDDAP, Dask, or S3 raises before the write block.
     try:
+        # --- 3. DYNAMIC API QUERY ---
+        print(f"\n🗺️ Step 2: Requesting {region.upper()} Data ({config['start_date']} to {config['end_date']})...")
+
+        # Use %3E/%3C for > and < — fsspec treats bare > and < as glob characters
+        # and also fails to follow the www.ifremer.fr → erddap.ifremer.fr redirect
+        # when the URL contains unencoded comparison operators.
+        erddap_url = (
+            f"https://erddap.ifremer.fr/erddap/tabledap/ArgoFloats.csv?"
+            f"platform_number,time,latitude,longitude,pres,temp,psal"
+            f"&latitude%3E={config['lat'][0]}&latitude%3C={config['lat'][1]}"
+            f"&longitude%3E={config['lon'][0]}&longitude%3C={config['lon'][1]}"
+            f"&time%3E={config['start_date']}T00:00:00Z"
+            f"&time%3C={config['end_date']}T23:59:59Z"
+        )
+
+        # Read CSV stream from ERDDAP
+        ddf = dd.read_csv(erddap_url, skiprows=[1], blocksize=None)
+        ddf = ddf.repartition(npartitions=n_workers * 4)
+
+        # --- 4. DATA CLEANING & DEPTH CONVERSION ---
+        print("🌉 Step 3: Formatting and Converting Pressure to Depth...")
+
+        ddf = ddf.rename(columns={'latitude': 'lat', 'longitude': 'lon'})
+
+        # Calculate exact Depth from Pressure using TEOS-10
+        ddf['depth'] = gsw.z_from_p(ddf['pres'], ddf['lat']) * -1
+
+        # Format Datetime and baseline for 'time_days'
+        ddf['time'] = dd.to_datetime(ddf['time'], utc=True)
+        baseline = pd.Timestamp('1999-01-01', tz='UTC')
+        ddf['time_days'] = (ddf['time'] - baseline).dt.total_seconds() / 86400
+
+        # --- 5. DISTRIBUTED PHYSICS ---
+        res = config["resolutions"]
+        d_min, d_max = config["depth_range"]
+
+        print(f"🚀 Step 4: Distributing Physics (Depth: {d_min}-{d_max}m, Res: {res['lat_step']}x{res['lon_step']})...")
+
+        # Pre-warm the Cartopy Natural Earth coastline shapefile on every worker
+        # before map_partitions fires. Workers start with an empty cache; if the
+        # download happens concurrently across many workers the shapefile can be
+        # written simultaneously and corrupted (struct.error on unpack). Running
+        # client.run() serialises the download — one call per worker, fully
+        # resolved before any compute task reads the shapefile.
+        def _warm_cartopy_cache():
+            from ebus_core.ae_utils import get_coastline_points
+            get_coastline_points('10m')  # populates Cartopy's local cache
+
+        print("    Pre-warming Cartopy coastline cache on workers...")
+        client.run(_warm_cartopy_cache)
+        print("    Cache ready.")
+
+        # Define meta for Dask output schema
+        meta = pd.DataFrame({
+            'time_bin': pd.Series(dtype='float64'),
+            'lat_bin': pd.Series(dtype='float64'),
+            'lon_bin': pd.Series(dtype='float64'),
+            'ohc': pd.Series(dtype='float64'),
+            'ohc_per_m': pd.Series(dtype='float64'),
+            'n_raw_points': pd.Series(dtype='int64'),
+            'platform_number': pd.Series(dtype='str'),
+            'dist_to_coast_km': pd.Series(dtype='float64')
+        })
+
+        # Apply physics function across cluster
+        ddf_binned = ddf.map_partitions(
+            estimate_ohc_from_raw_bins,
+            resolution_lat=res['lat_step'],
+            resolution_lon=res['lon_step'],
+            resolution_time_days=res['time_step'],
+            depth_min=d_min,  # CRITICAL: Respecting chosen depth
+            depth_max=d_max,  # CRITICAL: Respecting chosen depth
+            meta=meta
+        )
+
+        # --- 6. EXECUTION ---
+        print(f"\n💾 Step 5: Computing and Saving to Data Lake...")
         ddf_binned.to_parquet(output_s3, write_index=False)
         print(f"\n🎉 SUCCESS! File saved as: {config['run_id']}.parquet")
+
     except Exception as e:
-        print(f"❌ ERROR writing to S3: {e}")
+        print(f"❌ ERROR: {e}")
+        raise
     finally:
         client.close()
         cluster.shutdown()
 
-# MLOps seam: runner.py dispatches via this name. Points at run_cloud_pipeline.
-run_ingestion_pipeline = run_cloud_pipeline
+# MLOps runner seam. runner.py calls run_ingestion_pipeline(**dispatch_kwargs) where
+# dispatch_kwargs includes date_start, date_end, worker_region, s3_bucket — fields
+# controlled by the registry inside run_cloud_pipeline, not accepted as params there.
+# This wrapper absorbs the extras so run_cloud_pipeline receives only what it handles.
+def run_ingestion_pipeline(**kwargs):
+    run_cloud_pipeline(
+        region=kwargs["region"],
+        lat_step=kwargs.get("lat_step", 0.5),
+        lon_step=kwargs.get("lon_step", 0.5),
+        time_step=kwargs.get("time_step", 30.0),
+        depth_range=kwargs.get("depth_range", (0, 100)),
+        n_workers=kwargs.get("n_workers", 3),
+    )
+    return {}
 
 if __name__ == "__main__":
     # --- CANONICAL FX2 CONFIGURATION ---
