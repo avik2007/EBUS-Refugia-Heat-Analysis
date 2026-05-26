@@ -2,6 +2,142 @@
 
 ---
 
+## 2026-05-26 (session 15) — Portfolio page polished + MLOps section added
+
+### Summary
+Polished the GitHub Pages portfolio page (em-dashes, anisotropy plot, MLOps section) and
+merged all changes to main. Reviewed the RG-Gibbs kernel plan. Branch cleanup.
+
+### What was done
+
+**Portfolio page changes (docs/index.html):**
+- Removed all 23 em-dashes (replaced with `:`, `,`, `;` by context)
+- Added Source layer anisotropy plot (`docs/images/anisotropy_source_layer.png`) in the
+  Key Finding section with caption
+- Added "Engineering Infrastructure" section (between Results and Key Finding) advertising
+  the MLOps CLI: 3 capability cards (Config-Driven Runs, Immutable Manifests, Run Registry +
+  Collision Guard), dark CLI code block (validate/analyze/list/show), stat chips
+  (54 tests, Pydantic v2, SHA-256, JSONL registry)
+- Fixed spacing in Gibbs v2 card: restored `Matérn` accent, removed `letter-spacing: .05em`
+  from badges (was gapping words), collapsed `<em>k</em>` orphan onto same source line
+- Switched back to `main`, deleted `temp-portfolio-push` workaround branch
+
+**Specs/plans written:**
+- `docs/superpowers/specs/2026-05-26-mlops-portfolio-section.md`
+- `docs/superpowers/plans/2026-05-26-mlops-portfolio-section.md`
+
+### PRs merged
+- PR #5: em-dash removal + anisotropy image (merged to main via conflict resolution)
+- PR #7: MLOps infrastructure section
+- PR #8: Gibbs v2 spacing fixes
+
+### Next up
+- **[ACTIVE #1]** Presentation slides — deadline next week (combined anisotropy figure,
+  kriging snapshot, depth-layer schematic, 4 slides)
+- **[ACTIVE]** RG-Gibbs kernel — plan reviewed and ready, awaiting approval to execute
+
+---
+
+## 2026-05-25 (session 14) — Portfolio page built and deployed
+
+### Summary
+Brainstormed, specced, planned, and deployed a static GitHub Pages portfolio page for the project
+at `https://avik2007.github.io/EBUS-Refugia-Heat-Analysis/`. Page matches the mhw-risk-profiler
+visual design system (Bootstrap 5.3.2, Inter/system-ui, same CSS variables and component classes).
+
+### What was built
+- `docs/index.html` — 8-section static portfolio page (navbar, hero, pipeline, data coverage,
+  results, key finding, what's next, footer)
+- `docs/superpowers/specs/2026-05-25-portfolio-page-design.md` — design spec
+- `docs/superpowers/plans/2026-05-25-portfolio-page.md` — implementation plan
+
+### Key decisions
+- **Static images only** (Option A): no Plotly, no JS — `float_tracks.png` + `ohc_kriged.png` +
+  `rmsre_cv_overlay.png` in arch-img-wrap containers
+- **Gibbs kernel** described in the v2 "What's Next" roadmap card with correct technical detail
+  (`l(d)` sigmoid, `dist_to_coast`, `d₀`, `k`, L-BFGS-B)
+- **Repo slug**: actual GitHub remote is `EBUS-Refugia-Heat-Analysis` (not `ArgoEBUSAnalysis`) —
+  corrected in both GitHub links after deployment
+
+### PRs merged
+- PR #4: full portfolio page + accessibility/responsive fixes (aria-hidden, rel attrs, lazy images,
+  col-md-4, data-bs-theme, navbar-brand as `<a>`)
+- PR #5: closed (conflicting) — superseded by PR #6
+- PR #6: URL slug fix (`ArgoEBUSAnalysis` → `EBUS-Refugia-Heat-Analysis`)
+
+### Live URL
+`https://avik2007.github.io/EBUS-Refugia-Heat-Analysis/` — returns 200
+
+---
+
+## 2026-05-19 (session 13) — 5-minute talk plan written
+
+### Summary
+Brainstormed a 4-slide mini-talk plan for a research presentation (5-min slot, ML-literate + mixed
+academic audience). Audited all existing plot assets in `AEResults/`. Plan saved to
+`docs/presentations/2026-05-19-mini-talk-plan.md`.
+
+### Key decisions
+- 4 slides: float census domain map → kriging snapshot → anisotropy contrast (Skin vs Source) → Z-score + Gibbs motivation
+- THE result slide: Source layer anisotropy (ratio > 1.0, meridional dominance Jan–Apr + Jun–Aug) vs Skin (zonal throughout)
+- Story arc: stealth warming question → Argo + 3D GPR → vertical anisotropy fingerprint → what's next (Gibbs)
+
+### Assets to make before talk (in todo as #1)
+1. Combined 2-panel anisotropy figure (Skin vs Source, same time axis)
+2. Larger/cleaner kriging snapshot (optional)
+3. Conceptual depth-layer schematic with CUC arrow (hand-draw or generate)
+
+---
+
+## 2026-05-04 (session 12) — Gemini Gibbs green-light + RG-Gibbs implementation plan written
+
+### Summary
+Read Gemini's 2026-05-04 verdict in `argo_gemini_actions/AE_gemini_recentactions.md`. Gemini confirmed
+californiav3 Source layer regression fix (8.13% → 3.05% RMSRE, domain-clipping artifact resolved),
+confirmed Source meridional anisotropy as California Undercurrent signature, confirmed Background
+Z-spikes (>9.0) Jan-Feb + Sep 2015 as Pacific Blob non-stationarity events, and **green-lit GibbsKernel
+implementation** with `dist_to_coast` as the coordinate for the learnable sigmoid l(x).
+
+### Plan written
+Saved comprehensive TDD implementation plan to
+`docs/superpowers/plans/2026-05-04-rg-gibbs-kernel.md` (~750 lines, 9 tasks, ~40 bite-sized steps).
+
+### Architecture decisions captured in plan
+- `GibbsKernel` is a self-contained sklearn `Kernel` subclass in `argoebus_gp_physics.py`.
+- Spatial Gibbs (anisotropic 2:1 lat:lon, sigmoid `l(d)` of dist_to_coast_km) × Matern(nu=0.5) in time.
+- Lengthscale: `l(d) = l_min + (l_max - l_min) / (1 + exp(-k*(d - d_0)))`. l_min/l_max fixed
+  (100/400 km), d_0 and k learnable, time_ls learnable in 3D mode. Theta = log-space.
+- X stacked as `[lat_km, lon_km, time_scaled, dist_to_coast_km]` — last col read for lengthscale,
+  never differenced. Lat/lon projected to local km via equirectangular at window centroid.
+- Custom `_gibbs_optimizer` wraps scipy L-BFGS-B with finite-difference gradient (no analytic
+  gradient v1 — kernel signals NotImplementedError if `eval_gradient=True`).
+- Schema already wired: `KernelGibbsBlock` exists in `config_schema.py` with all hyperparameters;
+  runner `dispatch_kwargs` forwards `kernel_type` already. Gap: `run_diagnostic_inspection` swallows
+  `kernel_type` via `**_` (needs to actually use it); runner needs to pack `kernel_gibbs` block as
+  `gibbs_params` dict.
+
+### Files identified for modification (per plan)
+- `ArgoEBUSCloud/ebus_core/argoebus_gp_physics.py` — add GibbsKernel + `_gibbs_optimizer` +
+  `_lonlat_to_local_km`; modify `analyze_rolling_correlations` + `_build_kernel` closure for
+  gibbs branch.
+- `ArgoEBUSCloud/05_ae_update_tomatern0.5.py` — accept `kernel_type` + `gibbs_params` kwargs,
+  swap suffix `_3dmatern_w45` → `_3dgibbs_w45` when `kernel_type='gibbs'`.
+- `ArgoEBUSCloud/ebus_core/runner.py` — pack `KernelGibbsBlock` fields into `gibbs_params` dict
+  in `dispatch_kwargs` when `cfg.gpr.kernel_type == 'gibbs'`.
+- `ArgoEBUSCloud/test_mlops_foundation.py` — add ~10 new tests (sigmoid endpoints, kernel matrix
+  symmetry/PSD/anisotropy, theta round-trip, bounds log-space, clone_with_theta, GP fit smoke,
+  analyze_rolling_correlations gibbs branch, script 05 propagation, runner gibbs packing).
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml` — new (Source layer first run).
+
+### Plan-mode notes for next session
+- User wants approval per project CLAUDE.md hard stops before implementation begins.
+- Two execution options offered: subagent-driven (recommended) or inline `executing-plans`.
+- User switched to Opus 4.7 for plan writing; will re-evaluate model for execution.
+- Next session: verify plan still applies, get user approval, choose execution mode, then
+  begin Task 1 (GibbsKernel skeleton + sigmoid endpoint test).
+
+---
+
 ## 2026-05-03 (session 11) — californiav3 Matérn baseline GPR complete; dist_to_coast Gibbs motivated
 
 ### Summary
