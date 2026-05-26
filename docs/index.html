@@ -83,9 +83,9 @@
 <body>
 
 <!-- ── Navbar ──────────────────────────────────────────────────────────────── -->
-<nav class="navbar navbar-light sticky-top px-4 py-2 d-flex justify-content-between align-items-center">
-  <span class="navbar-brand">🌊 Argo-EBUS Analysis</span>
-  <a class="nav-gh" href="https://github.com/avik2007/ArgoEBUSAnalysis" target="_blank">GitHub ↗</a>
+<nav class="navbar sticky-top px-4 py-2 d-flex justify-content-between align-items-center" data-bs-theme="light">
+  <a class="navbar-brand" href="#" aria-label="Argo-EBUS Analysis home"><span aria-hidden="true">🌊</span> Argo-EBUS Analysis</a>
+  <a class="nav-gh" href="https://github.com/avik2007/ArgoEBUSAnalysis" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
 </nav>
 
 <!-- ── Hero ────────────────────────────────────────────────────────────────── -->
@@ -127,31 +127,31 @@
     <div class="pipeline-wrap mt-4">
       <div class="pipeline-flow">
         <div class="pipe-node">
-          <span class="pipe-icon">🌊</span>
+          <span class="pipe-icon" aria-hidden="true">🌊</span>
           <div class="pipe-name">Argo ERDDAP</div>
           <div class="pipe-sub">Float profiles fetched in 5-year chunks from the GDAC ERDDAP endpoint</div>
         </div>
         <div class="pipe-arrow">→</div>
         <div class="pipe-node">
-          <span class="pipe-icon">🔪</span>
+          <span class="pipe-icon" aria-hidden="true">🔪</span>
           <div class="pipe-name">Layer Filter</div>
           <div class="pipe-sub">Skin (0–100 m) · Source (150–400 m) · Background (500–1000 m)</div>
         </div>
         <div class="pipe-arrow">→</div>
         <div class="pipe-node">
-          <span class="pipe-icon">🧮</span>
+          <span class="pipe-icon" aria-hidden="true">🧮</span>
           <div class="pipe-name">3D GPR</div>
           <div class="pipe-sub">Matérn-½ × Matérn-½ kernel over lat / lon / time — rolling 10-day windows</div>
         </div>
         <div class="pipe-arrow">→</div>
         <div class="pipe-node">
-          <span class="pipe-icon">📊</span>
+          <span class="pipe-icon" aria-hidden="true">📊</span>
           <div class="pipe-name">Kriged Heat Map</div>
           <div class="pipe-sub">Continuous OHC field with posterior mean and uncertainty per 0.5° cell</div>
         </div>
         <div class="pipe-arrow">→</div>
         <div class="pipe-node highlight">
-          <span class="pipe-icon">📐</span>
+          <span class="pipe-icon" aria-hidden="true">📐</span>
           <div class="pipe-name" style="color:var(--accent)">Anisotropy Analysis</div>
           <div class="pipe-sub">Lat_Scale / Lon_Scale ratio per window — vertical current fingerprint</div>
         </div>
@@ -205,7 +205,8 @@
 
     <div class="arch-img-wrap mt-4">
       <img src="images/float_tracks.png"
-           alt="Argo float trajectories across the California Current System, 2015">
+           alt="Argo float trajectories across the California Current System, 2015"
+           loading="lazy">
     </div>
     <p class="img-caption">
       Argo float trajectories across the California Current System bounding box
@@ -247,33 +248,34 @@
 <section>
   <div class="container">
     <p class="section-label">GPR Output</p>
-    <h2 class="section-title">Kriged Ocean Heat Content — Skin Layer (0–100 m), 2015</h2>
-    <p class="section-sub">Rolling 10-day window snapshots across the California Current; posterior mean shown.</p>
+    <h2 class="section-title">Baseline Results — California Current System, 2015</h2>
+    <p class="section-sub">Skin layer (0–100 m) kriged OHC map with leave-one-out cross-validation; key model quality metrics across all layers.</p>
 
     <div class="arch-img-wrap mt-4">
       <img src="images/ohc_kriged.png"
-           alt="GPR-interpolated OHC field for the 0–100m skin layer, California CCS 2015">
+           alt="GPR-interpolated OHC field for the 0–100m skin layer, California CCS 2015"
+           loading="lazy">
     </div>
     <p class="img-caption">
-      GPR-interpolated ocean heat content, Skin layer (0–100 m), California Current System, 2015.
+      GPR-interpolated ocean heat content — Skin layer (0–100 m), California Current System, 2015.
     </p>
 
     <div class="row mt-4 g-3">
-      <div class="col-sm-4">
+      <div class="col-md-4">
         <div class="stat-card">
           <div class="stat-label" style="color:var(--accent)">Cross-Validation</div>
           <div class="stat-val"   style="color:var(--accent)">&lt;5%</div>
           <div class="stat-sub">RMSRE target — leave-one-out holdout error</div>
         </div>
       </div>
-      <div class="col-sm-4">
+      <div class="col-md-4">
         <div class="stat-card">
           <div class="stat-label" style="color:var(--accent)">Uncertainty Calibration</div>
           <div class="stat-val"   style="color:var(--accent)">≈1.0</div>
           <div class="stat-sub">Std Z-Score — posterior spread vs. true residuals</div>
         </div>
       </div>
-      <div class="col-sm-4">
+      <div class="col-md-4">
         <div class="stat-card">
           <div class="stat-label" style="color:var(--accent)">Source Layer Signal</div>
           <div class="stat-val"   style="color:var(--accent)">&gt;1.0</div>
@@ -284,7 +286,8 @@
 
     <div class="arch-img-wrap mt-4">
       <img src="images/rmsre_cv_overlay.png"
-           alt="Leave-one-out CV error map showing model skill vs. held-out Argo observations">
+           alt="Leave-one-out CV error map showing model skill vs. held-out Argo observations"
+           loading="lazy">
     </div>
     <p class="img-caption">
       Leave-one-out cross-validation RMSRE overlay — model skill vs. held-out Argo observations.
@@ -398,7 +401,7 @@
     <p class="mb-1" style="font-weight:700;color:var(--text)">Argo-EBUS Analysis — California Current System</p>
     <p class="mb-1">Data: Argo Global Array (GDAC / ERDDAP) &middot; TEOS-10 (GSW)</p>
     <p class="mb-0">
-      <a href="https://github.com/avik2007/ArgoEBUSAnalysis" target="_blank">GitHub ↗</a>
+      <a href="https://github.com/avik2007/ArgoEBUSAnalysis" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
     </p>
   </div>
 </footer>
