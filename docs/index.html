@@ -73,8 +73,8 @@
     .road-dot        { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: .35rem; }
 
     /* Badges */
-    .v1-badge { background: var(--warnbg); border: 1px solid var(--warnbdr); color: var(--warn);   border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; letter-spacing: .05em; }
-    .v2-badge { background: #f0fdf4;       border: 1px solid #6ee7b7;        color: #059669; border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; letter-spacing: .05em; }
+    .v1-badge { background: var(--warnbg); border: 1px solid var(--warnbdr); color: var(--warn);   border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; }
+    .v2-badge { background: #f0fdf4;       border: 1px solid #6ee7b7;        color: #059669; border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; }
 
     /* Code block */
     .code-wrap { background: #0f1923; border: 1.5px solid var(--border); border-radius: 14px; padding: 1.5rem; overflow-x: auto; }
@@ -421,7 +421,7 @@ aebus show california_20150101_20151231_res0_5x0_5_t30_0_d150_400_3dmatern_w45</
 <section>
   <div class="container">
     <p class="section-label">What's Next</p>
-    <h2 class="section-title">Matern Kernel to Gibbs Kernel</h2>
+    <h2 class="section-title">Matérn Kernel to Gibbs Kernel</h2>
     <p class="section-sub">The baseline uses a fixed-lengthscale Matérn kernel. The next step is a spatially adaptive kernel that reduces predictive variance near the shelf break.</p>
 
     <div class="row mt-4 g-3">
@@ -461,8 +461,7 @@ aebus show california_20150101_20151231_res0_5x0_5_t30_0_d150_400_3dmatern_w45</
           </div>
           <div class="road-item">
             <span class="road-dot" style="background:#059669"></span>
-            Learnable parameters: shelf inflection point <em>d₀</em> and sigmoid steepness
-            <em>k</em>, optimized via L-BFGS-B
+            Learnable parameters: shelf inflection point <em>d₀</em> and sigmoid steepness <em>k</em>, optimized via L-BFGS-B
           </div>
           <div class="road-item">
             <span class="road-dot" style="background:#059669"></span>
