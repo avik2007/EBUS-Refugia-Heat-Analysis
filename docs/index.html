@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Argo-EBUS Analysis — California Current Stealth Warming</title>
+  <title>Argo-EBUS Analysis: California Current Stealth Warming</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
   <style>
     :root {
@@ -22,28 +22,28 @@
     a:hover { text-decoration: underline; }
     section { padding: 4rem 0; border-top: 1px solid var(--border); }
 
-    /* ── Navbar ── */
+    /* Navbar */
     .navbar        { background: #ffffff; border-bottom: 1px solid var(--border); box-shadow: 0 1px 4px rgba(0,0,0,.06); }
     .navbar-brand  { font-weight: 800; font-size: 1.1rem; color: var(--text) !important; letter-spacing: -.02em; }
     .nav-gh        { border: 1px solid var(--border); border-radius: 6px; padding: 5px 14px; font-size: .85rem; font-weight: 600; color: var(--muted) !important; transition: all .15s; }
     .nav-gh:hover  { border-color: var(--accent); color: var(--accent) !important; }
 
-    /* ── Hero ── */
+    /* Hero */
     .hero        { padding: 5rem 0 3.5rem; background: linear-gradient(160deg, #eaf3ff 0%, #f8fbff 60%, #edfaf4 100%); border-top: none; }
     .hero h1     { font-size: clamp(2rem, 5vw, 3rem); font-weight: 900; letter-spacing: -.04em; color: var(--text); }
     .hero-intro  { font-size: 1.1rem; color: var(--muted); max-width: 720px; margin: 1rem auto 0; line-height: 1.7; }
     .stat-chip   { background: #ffffff; border: 1px solid var(--border); border-radius: 999px; padding: .4rem 1rem; font-size: .82rem; font-weight: 700; color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; margin: .3rem; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
     .stat-chip .val { color: var(--text); font-size: .95rem; }
 
-    /* ── Section labels ── */
+    /* Section labels */
     .section-label { font-size: .72rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: .4rem; }
     .section-title { font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 800; letter-spacing: -.03em; color: var(--text); }
     .section-sub   { font-size: 1rem; color: var(--muted); margin-top: .5rem; }
 
-    /* ── Cards ── */
+    /* Cards */
     .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
 
-    /* ── Pipeline ── */
+    /* Pipeline */
     .pipeline-wrap { overflow-x: auto; padding-bottom: .5rem; }
     .pipeline-flow { display: flex; align-items: stretch; gap: 0; min-width: 680px; }
     .pipe-node          { flex: 1; background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 1.4rem 1rem; text-align: center; }
@@ -53,54 +53,54 @@
     .pipe-sub  { font-size: .75rem; color: var(--muted); margin-top: .3rem; line-height: 1.4; }
     .pipe-arrow { display: flex; align-items: center; justify-content: center; padding: 0 .5rem; font-size: 1.5rem; color: #c0cfe4; flex-shrink: 0; }
 
-    /* ── Images ── */
+    /* Images */
     .arch-img-wrap     { background: #f8faff; border: 1.5px solid var(--border); border-radius: 14px; padding: 1.5rem; text-align: center; }
     .arch-img-wrap img { width: 100%; max-width: 860px; height: auto; }
     .arch-bullet        { font-size: .95rem; color: var(--muted); margin: .85rem 0; padding-left: 1rem; border-left: 3px solid var(--border); line-height: 1.55; }
     .arch-bullet strong { color: var(--text); display: block; margin-bottom: .15rem; }
     .img-caption        { font-size: .8rem; color: var(--muted); margin-top: .75rem; text-align: center; }
 
-    /* ── Stat cards ── */
+    /* Stat cards */
     .stat-card  { background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 1.25rem 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
     .stat-label { font-size: .72rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
     .stat-val   { font-size: 2.25rem; font-weight: 900; line-height: 1.1; margin: .3rem 0; }
     .stat-sub   { font-size: .8rem; color: var(--muted); }
 
-    /* ── Roadmap ── */
+    /* Roadmap */
     .roadmap-card    { background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px; padding: 1.5rem 1.75rem; height: 100%; box-shadow: 0 1px 4px rgba(0,0,0,.05); }
     .roadmap-card h3 { font-size: 1rem; font-weight: 800; margin-bottom: 1rem; }
     .road-item       { display: flex; align-items: flex-start; gap: .7rem; margin: .75rem 0; font-size: .9rem; color: var(--muted); line-height: 1.5; }
     .road-dot        { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: .35rem; }
 
-    /* ── Badges ── */
+    /* Badges */
     .v1-badge { background: var(--warnbg); border: 1px solid var(--warnbdr); color: var(--warn);   border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; letter-spacing: .05em; }
     .v2-badge { background: #f0fdf4;       border: 1px solid #6ee7b7;        color: #059669; border-radius: 5px; font-size: .72rem; font-weight: 800; padding: 2px 8px; letter-spacing: .05em; }
 
-    /* ── Footer ── */
+    /* Footer */
     footer { padding: 2.5rem 0; border-top: 1px solid var(--border); text-align: center; color: var(--muted); font-size: .875rem; background: var(--surface); }
   </style>
 </head>
 <body>
 
-<!-- ── Navbar ──────────────────────────────────────────────────────────────── -->
+<!-- Navbar -->
 <nav class="navbar sticky-top px-4 py-2 d-flex justify-content-between align-items-center" data-bs-theme="light">
   <a class="navbar-brand" href="#" aria-label="Argo-EBUS Analysis home"><span aria-hidden="true">🌊</span> Argo-EBUS Analysis</a>
   <a class="nav-gh" href="https://github.com/avik2007/EBUS-Refugia-Heat-Analysis" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
 </nav>
 
-<!-- ── Hero ────────────────────────────────────────────────────────────────── -->
+<!-- Hero -->
 <section class="hero text-center">
   <div class="container">
     <p class="section-label">California Current System · Subsurface Warming Research</p>
     <h1>Stealth Warming in the<br>California Current System</h1>
     <p class="hero-intro mx-auto">
       Most climate resilience assessments of Eastern Boundary Upwelling Systems rely on satellite
-      sea-surface temperature — but Ekman upwelling continuously pulls cold deep water to the surface,
+      sea-surface temperature, but Ekman upwelling continuously pulls cold deep water to the surface,
       masking subsurface warmth from space. This project conducts a <strong>vertical audit</strong>
       of the California Current using the Argo float array: separating the water column into three
       thermodynamically distinct layers and applying <strong>3D Gaussian Process Regression
       (Kriging)</strong> to construct continuous, probabilistic ocean heat content fields with explicit
-      uncertainty. The goal is to detect "stealth warming" — source water heating transported by the
+      uncertainty. The goal is to detect "stealth warming": source water heating transported by the
       California Undercurrent that has not yet surfaced.
     </p>
     <div class="mt-4">
@@ -112,12 +112,12 @@
     </div>
     <div class="mt-3">
       <span class="v1-badge">BASELINE RESULTS</span>
-      <span style="color:var(--muted);font-size:.82rem;margin-left:.5rem">2015 single-year pilot — multi-year extension in progress</span>
+      <span style="color:var(--muted);font-size:.82rem;margin-left:.5rem">2015 single-year pilot; multi-year extension in progress</span>
     </div>
   </div>
 </section>
 
-<!-- ── Pipeline ────────────────────────────────────────────────────────────── -->
+<!-- Pipeline -->
 <section>
   <div class="container">
     <p class="section-label">How It Works</p>
@@ -141,7 +141,7 @@
         <div class="pipe-node">
           <span class="pipe-icon" aria-hidden="true">🧮</span>
           <div class="pipe-name">3D GPR</div>
-          <div class="pipe-sub">Matérn-½ × Matérn-½ kernel over lat / lon / time — rolling 10-day windows</div>
+          <div class="pipe-sub">Matérn-½ × Matérn-½ kernel over lat / lon / time, rolling 10-day windows</div>
         </div>
         <div class="pipe-arrow">→</div>
         <div class="pipe-node">
@@ -153,7 +153,7 @@
         <div class="pipe-node highlight">
           <span class="pipe-icon" aria-hidden="true">📐</span>
           <div class="pipe-name" style="color:var(--accent)">Anisotropy Analysis</div>
-          <div class="pipe-sub">Lat_Scale / Lon_Scale ratio per window — vertical current fingerprint</div>
+          <div class="pipe-sub">Lat_Scale / Lon_Scale ratio per window, vertical current fingerprint</div>
         </div>
       </div>
     </div>
@@ -165,7 +165,7 @@
           <p class="mb-0" style="font-size:.88rem;color:var(--muted);line-height:1.6">
             <strong style="color:var(--text)">Ekman upwelling</strong> continuously draws cold, dense
             water from depth to the surface along the California coast. Satellite SST sees this cold
-            plume and registers a "cool" signal — masking significant warming in the source waters
+            plume and registers a "cool" signal, masking significant warming in the source waters
             below, before they upwell.
           </p>
         </div>
@@ -188,7 +188,7 @@
             <strong style="color:var(--text)">Gaussian Process Regression</strong> treats ocean heat
             content as a random field with a covariance structure defined by a kernel. Fitting the
             kernel to sparse Argo observations yields a full continuous heat map plus honest uncertainty
-            estimates — probabilistic inference, not just interpolation.
+            estimates: probabilistic inference, not just interpolation.
           </p>
         </div>
       </div>
@@ -196,11 +196,11 @@
   </div>
 </section>
 
-<!-- ── Data Coverage ────────────────────────────────────────────────────────── -->
+<!-- Data Coverage -->
 <section>
   <div class="container">
     <p class="section-label">Observation Network</p>
-    <h2 class="section-title">Argo Float Coverage — California Current System</h2>
+    <h2 class="section-title">Argo Float Coverage: California Current System</h2>
     <p class="section-sub">Sparse by design; void ratio quantified before modeling to mask unreliable kriged estimates.</p>
 
     <div class="arch-img-wrap mt-4">
@@ -244,11 +244,11 @@
   </div>
 </section>
 
-<!-- ── Results ──────────────────────────────────────────────────────────────── -->
+<!-- Results -->
 <section>
   <div class="container">
     <p class="section-label">GPR Output</p>
-    <h2 class="section-title">Baseline Results — California Current System, 2015</h2>
+    <h2 class="section-title">Baseline Results: California Current System, 2015</h2>
     <p class="section-sub">Skin layer (0–100 m) kriged OHC map with leave-one-out cross-validation; key model quality metrics across all layers.</p>
 
     <div class="arch-img-wrap mt-4">
@@ -257,7 +257,7 @@
            loading="lazy">
     </div>
     <p class="img-caption">
-      GPR-interpolated ocean heat content — Skin layer (0–100 m), California Current System, 2015.
+      GPR-interpolated ocean heat content, Skin layer (0–100 m), California Current System, 2015.
     </p>
 
     <div class="row mt-4 g-3">
@@ -265,21 +265,21 @@
         <div class="stat-card">
           <div class="stat-label" style="color:var(--accent)">Cross-Validation</div>
           <div class="stat-val"   style="color:var(--accent)">&lt;5%</div>
-          <div class="stat-sub">RMSRE target — leave-one-out holdout error</div>
+          <div class="stat-sub">RMSRE target, leave-one-out holdout error</div>
         </div>
       </div>
       <div class="col-md-4">
         <div class="stat-card">
           <div class="stat-label" style="color:var(--accent)">Uncertainty Calibration</div>
           <div class="stat-val"   style="color:var(--accent)">≈1.0</div>
-          <div class="stat-sub">Std Z-Score — posterior spread vs. true residuals</div>
+          <div class="stat-sub">Std Z-Score, posterior spread vs. true residuals</div>
         </div>
       </div>
       <div class="col-md-4">
         <div class="stat-card">
           <div class="stat-label" style="color:var(--accent)">Source Layer Signal</div>
           <div class="stat-val"   style="color:var(--accent)">&gt;1.0</div>
-          <div class="stat-sub">Anisotropy ratio — meridional dominance (CUC fingerprint)</div>
+          <div class="stat-sub">Anisotropy ratio, meridional dominance (CUC fingerprint)</div>
         </div>
       </div>
     </div>
@@ -290,16 +290,16 @@
            loading="lazy">
     </div>
     <p class="img-caption">
-      Leave-one-out cross-validation RMSRE overlay — model skill vs. held-out Argo observations.
+      Leave-one-out cross-validation RMSRE overlay, model skill vs. held-out Argo observations.
     </p>
   </div>
 </section>
 
-<!-- ── Key Finding ──────────────────────────────────────────────────────────── -->
+<!-- Key Finding -->
 <section>
   <div class="container">
     <p class="section-label">Scientific Result</p>
-    <h2 class="section-title">Vertical Anisotropy Fingerprint — Upwelling Current Signature</h2>
+    <h2 class="section-title">Vertical Anisotropy Fingerprint: Upwelling Current Signature</h2>
     <p class="section-sub">The spatial correlation structure of ocean heat content changes with depth in a way that tracks the California Undercurrent.</p>
 
     <div class="row mt-4 g-4">
@@ -307,15 +307,15 @@
         <p style="font-size:1rem;color:var(--muted);line-height:1.8">
           The GPR kernel's fitted spatial lengthscales reveal a striking vertical contrast.
           In the <strong style="color:var(--text)">Skin layer (0–100 m)</strong>, the anisotropy
-          ratio (Lat_Scale&nbsp;/&nbsp;Lon_Scale) remains below 1.0 throughout 2015 — zonal
-          structure driven by atmospheric forcing along the coast. In the
+          ratio (Lat_Scale&nbsp;/&nbsp;Lon_Scale) remains below 1.0 throughout 2015, reflecting
+          zonal structure driven by atmospheric forcing along the coast. In the
           <strong style="color:var(--text)">Source layer (150–400 m)</strong>, the ratio exceeds
           1.0 across January–April and June–August, indicating meridional correlation dominance:
           heat is organized <em>along</em> the current axis, not across it.
         </p>
         <p style="font-size:1rem;color:var(--muted);line-height:1.8">
           This meridional structure matches the expected flow axis of the
-          <strong style="color:var(--text)">California Undercurrent</strong> — the poleward
+          <strong style="color:var(--text)">California Undercurrent</strong>, the poleward
           subsurface flow that transports warm, saline equatorial water beneath the
           southward-flowing surface current. The decoupling between Skin (zonal) and Source
           (meridional) anisotropy is the expected fingerprint of stealth warming transported
@@ -334,20 +334,31 @@
         </div>
       </div>
     </div>
+
+    <div class="arch-img-wrap mt-4">
+      <img src="images/anisotropy_source_layer.png"
+           alt="Anisotropy ratio time series for the Source layer (150–400 m), California CCS 2015"
+           loading="lazy">
+    </div>
+    <p class="img-caption">
+      Fitted GPR anisotropy ratio (Lat_Scale / Lon_Scale) per 10-day window, Source layer (150–400 m),
+      California Current System, 2015. Ratio &gt;1.0 indicates meridional correlation dominance consistent
+      with California Undercurrent transport.
+    </p>
   </div>
 </section>
 
-<!-- ── What's Next ──────────────────────────────────────────────────────────── -->
+<!-- What's Next -->
 <section>
   <div class="container">
     <p class="section-label">What's Next</p>
-    <h2 class="section-title">Matérn Kernel → Gibbs Kernel</h2>
+    <h2 class="section-title">Matern Kernel to Gibbs Kernel</h2>
     <p class="section-sub">The baseline uses a fixed-lengthscale Matérn kernel. The next step is a spatially adaptive kernel that reduces predictive variance near the shelf break.</p>
 
     <div class="row mt-4 g-3">
       <div class="col-md-6">
         <div class="roadmap-card">
-          <h3><span class="v1-badge me-2">v1 — Current</span> Baseline results</h3>
+          <h3><span class="v1-badge me-2">v1: Current</span> Baseline results</h3>
           <div class="road-item">
             <span class="road-dot" style="background:var(--warn)"></span>
             Matérn-½ × Matérn-½ kernel with a fixed spatial lengthscale across the entire domain
@@ -362,13 +373,13 @@
           </div>
           <div class="road-item">
             <span class="road-dot" style="background:var(--warn)"></span>
-            2015 pilot only; Source layer RMSRE 3.05% — multi-year extension pending
+            2015 pilot only; Source layer RMSRE 3.05%, multi-year extension pending
           </div>
         </div>
       </div>
       <div class="col-md-6">
         <div class="roadmap-card">
-          <h3><span class="v2-badge me-2">v2 — In Progress</span> Gibbs kernel</h3>
+          <h3><span class="v2-badge me-2">v2: In Progress</span> Gibbs kernel</h3>
           <div class="road-item">
             <span class="road-dot" style="background:#059669"></span>
             Gibbs kernel replaces the fixed Matérn spatial component: lengthscale <em>l(d)</em>
@@ -376,7 +387,7 @@
           </div>
           <div class="road-item">
             <span class="road-dot" style="background:#059669"></span>
-            Short correlation lengths near the shelf; longer lengths offshore — adapts to the
+            Short correlation lengths near the shelf; longer lengths offshore, adapts to the
             float density gradient across the shelf break
           </div>
           <div class="road-item">
@@ -395,10 +406,10 @@
   </div>
 </section>
 
-<!-- ── Footer ───────────────────────────────────────────────────────────────── -->
+<!-- Footer -->
 <footer>
   <div class="container">
-    <p class="mb-1" style="font-weight:700;color:var(--text)">Argo-EBUS Analysis — California Current System</p>
+    <p class="mb-1" style="font-weight:700;color:var(--text)">Argo-EBUS Analysis: California Current System</p>
     <p class="mb-1">Data: Argo Global Array (GDAC / ERDDAP) &middot; TEOS-10 (GSW)</p>
     <p class="mb-0">
       <a href="https://github.com/avik2007/EBUS-Refugia-Heat-Analysis" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
