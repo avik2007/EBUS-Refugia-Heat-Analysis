@@ -1,0 +1,12 @@
+schema_version: 1
+config_kind: ingestion
+region: californiav3
+date_start: '2015-01-01'
+date_end: '2015-12-31'
+lat_step: 0.5
+lon_step: 0.5
+time_step: 10.0
+depth_range:
+- 500
+- 1000
+description: californiav3 Background Layer (500-1000m) ingestion — pushes parquet to S3

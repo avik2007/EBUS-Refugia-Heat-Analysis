@@ -56,7 +56,8 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
                               run_suffix="",
                               spatial_ls_upper_bound=10,
                               time_ls_bounds_days=(15.0, 45.0),
-                              step_size_days=10):
+                              step_size_days=10,
+                              **_):
     # --- 1. SETUP & HOUSEKEEPING ---
     # get_ae_config builds the run_id used to locate the S3 parquet. The S3
     # key is unchanged from script 03 — same data, different analysis config.

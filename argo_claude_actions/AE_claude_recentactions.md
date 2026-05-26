@@ -2,6 +2,64 @@
 
 ---
 
+## 2026-05-03 (session 11) — californiav3 Matérn baseline GPR complete; dist_to_coast Gibbs motivated
+
+### Summary
+Applied YAML fix (`time_ls_bounds_days: [15.0, 45.0]` in all 3 analysis configs). Ran GPR for all 3 layers.
+Skin: median RMSRE 4.25%, 27/35 pass. Source: 3.05%, 32/35 pass (vs 8.13% in californiav2). Background: 2.50%, 35/35 pass.
+Cross-layer Z-score pattern (chronic 0.5–0.9 + localized spikes) consistent across all 3 layers → stationary Matérn
+cannot adapt near shelf break. User confirmed dist_to_coast as Gibbs l(x) motivation. Background Z-spikes (9–11)
+at Jan-Feb + Sep 2015 likely Pacific Blob onset — flagged for Gemini.
+Next: Gemini science verdict → green-light dist_to_coast GibbsKernel implementation.
+
+---
+
+## 2026-05-03 (session 10) — californiav3 ingestion complete; GPR blocked on YAML fix
+
+### Summary
+Investigated californiav3 state: feature branch already merged, 09c committed, bounds in ae_utils.py.
+Wrote all configs, fixed 4 pipeline bugs in Script 02 + Script 05, ran all 3 ingestions successfully.
+GPR analysis blocked by one YAML issue — fix ready, not yet applied (session ended).
+
+### Configs written (all in `configs/californiav3/`)
+- 3 analysis YAMLs: `*_d0_100_3dmatern_w45.yaml`, `*_d150_400_3dmatern_w45.yaml`, `*_d500_1000_3dmatern_w45.yaml`
+- 3 ingestion YAMLs: `*_d0_100_ingest.yaml`, `*_d150_400_ingest.yaml`, `*_d500_1000_ingest.yaml`
+- All 6 validate clean via `aebus_cli.py validate`
+
+### Ingestion — SUCCESS
+All 3 parquets written to S3 and registered in `AEResults/run_registry.jsonl`:
+- `californiav3_20150101_20151231_res0_5x0_5_t10_0_d0_100`
+- `californiav3_20150101_20151231_res0_5x0_5_t10_0_d150_400`
+- `californiav3_20150101_20151231_res0_5x0_5_t10_0_d500_1000`
+
+### Pipeline bugs fixed in `02_ae_cloud_run.py`
+1. **`run_ingestion_pipeline()` wrapper** — replaced bare alias with a wrapper that absorbs
+   runner extras (`date_start`, `date_end`, `worker_region`, `s3_bucket`) before calling
+   `run_cloud_pipeline()`. Previous alias caused `TypeError: unexpected keyword argument`.
+2. **ERDDAP URL encoding** — `>` → `%3E`, `<` → `%3C`; URL now points to `erddap.ifremer.fr`
+   directly (skips 302 redirect). Previous unencoded operators caused fsspec glob-char error.
+3. **Cluster try/finally** — wrapped all post-cluster code in try/finally so `cluster.shutdown()`
+   always fires even on ERDDAP/Dask/S3 errors. Previous code leaked clusters on pre-S3 failures.
+4. **Cartopy cache pre-warm** — `client.run(_warm_cartopy_cache)` downloads Natural Earth 10m
+   coastline shapefile on each worker before map_partitions. Previous concurrent download caused
+   `struct.error: unpack requires buffer of 2752 bytes` shapefile corruption.
+
+### Pipeline bug fixed in `05_ae_update_tomatern0.5.py`
+5. **`**_` kwarg absorber** — added `**_` to `run_diagnostic_inspection()` signature to absorb
+   runner extras (`mode`, `kernel_type`, `window_size_days`, `min_bins`, `noise_val`). These
+   match the hardcoded values inside the function; previously caused `TypeError: unexpected kwarg`.
+
+### GPR analysis — BLOCKED (easy fix)
+`aebus analyze` fails with `TypeError: 'NoneType' object is not subscriptable` in
+`analyze_rolling_correlations` at `time_ls_bounds_days[0]`. Cause: analysis YAMLs have
+`time_ls_bounds_days: null` but Script 05 requires a tuple. Fix for next session:
+Set `gpr.time_ls_bounds_days: [15.0, 45.0]` in all 3 analysis YAMLs, then re-run analyze.
+
+### Tests
+54/54 passing throughout all changes.
+
+---
+
 ## 2026-05-02 (session 9) — MLOps audit complete; all 5 gaps fixed; main clean
 
 ### Summary
