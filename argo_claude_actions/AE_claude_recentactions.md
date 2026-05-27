@@ -2,6 +2,97 @@
 
 ---
 
+## 2026-05-26 (session 17) — Gibbs 3-layer validation complete
+
+### Summary
+Fixed two bugs in the Gibbs pipeline, widened time bounds, ran all 3 layers with Gibbs kernel,
+produced full Gibbs vs Matérn comparison. Gibbs wins on RMSRE and Z-calibration across all layers.
+Time persistence now learnable and increases with depth — consistent with stealth warming hypothesis.
+
+### Bugs fixed
+
+**`argoebus_gp_physics.py` — temporal persistence plot was blank:**
+- `scale_time_bin` was explicitly set to `np.nan` on the gibbs path. Fix: store `fitted_gibbs._time_ls`
+  (already in days) so the temporal persistence plot renders with real data.
+
+**`runner.py` — `--force-overwrite` raised ManifestCollisionError before deleting:**
+- `check_collision()` called unconditionally before `shutil.rmtree`. Fix: initialize `verdict = "fresh"`,
+  only call `check_collision` in the `else` branch. Applied to both `run_analysis` and `run_ingestion`.
+
+### Config changes
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml`: `time_ls_bounds_days` upper bound 45→90d
+- `configs/californiav3/californiav3_d0_100_gibbs.yaml`: new (Skin layer)
+- `configs/californiav3/californiav3_d500_1000_gibbs.yaml`: new (Background layer)
+
+### 3-layer Gibbs vs Matérn results
+
+| Layer | Matérn RMSRE | Gibbs RMSRE | Matérn Z mean±std | Gibbs Z mean±std |
+|-------|-------------|------------|------------------|-----------------|
+| Skin (0–100m) | 4.25% | 3.49% | 1.35 ± 1.30 | 0.98 ± 0.10 |
+| Source (150–400m) | 3.05% | 2.54% | 1.13 ± 1.05 | 0.97 ± 0.10 |
+| Background (500–1000m) | 2.50% | 1.84% | 1.72 ± 2.63 | 0.98 ± 0.07 |
+
+Matérn time_ls pegged at 45d (zero variance). Gibbs: Skin 44d, Source 54d, Background 58d — increases with depth.
+
+### Remaining convergence warnings (for Gemini)
+- `d_transition_bounds_km` upper 700km still hitting → consider 1000–1500km
+- `anisotropy_lat_lon_ratio` lower 1.0 hit ~40% Source windows → consider allowing 0.5
+
+---
+
+## 2026-05-26 (session 16) — GibbsKernel implemented + Source layer smoke run
+
+### Summary
+Implemented the full GibbsKernel (non-stationary, learnable sigmoid lengthscale of
+`dist_to_coast_km`) and wired it through the GPR pipeline. Key design change from plan:
+`anisotropy_lat_lon_ratio` made learnable (theta length 4 in 3D). Smoke run on
+californiav3 Source layer: 32/34 windows pass, median RMSRE 2.54% vs matern 3.05%.
+
+### What was done
+
+**GibbsKernel (`ArgoEBUSCloud/ebus_core/argoebus_gp_physics.py`):**
+- `__init__`: added `anisotropy_lat_lon_ratio_bounds=(1.0, 4.0)` + `_anisotropy_ratio` live mirror
+- `__call__`: full Gibbs spatial kernel (Paciorek & Schervish 2004) + Matern-0.5 time factor;
+  uses `self._anisotropy_ratio` (learnable, not fixed)
+- `theta` / `bounds` / `clone_with_theta` / `get_params` / `hyperparameters`: full sklearn API
+  — theta = `[log(d_0), log(k), log(time_ls), log(anisotropy)]`, length 4 in 3D
+- `_gibbs_optimizer`: scipy L-BFGS-B finite-difference wrapper (no analytic gradients needed)
+- `_lonlat_to_local_km`: equirectangular projection helper
+
+**Pipeline wiring:**
+- `analyze_rolling_correlations`: `kernel_type='gibbs'` branch — skips StandardScaler,
+  projects lat/lon to local km, appends dist_to_coast as aux column, dispatches GibbsKernel.
+  Result columns: `d_transition_km`, `k_steepness`, `time_ls_days`, `anisotropy_ratio`,
+  effective `scale_lat_bin`/`scale_lon_bin` (at median dist_to_coast, for kriging plots)
+- `05_ae_update_tomatern0.5.py`: `kernel_type`/`gibbs_params` kwargs, dynamic suffix
+  `_3dgibbs_w45` vs `_3dmatern_w45`
+- `ebus_core/runner.py`: packs `KernelGibbsBlock` → `gibbs_params` dict including
+  `anisotropy_lat_lon_ratio_bounds`
+- `ebus_core/config_schema.py`: added `anisotropy_lat_lon_ratio_bounds` to `KernelGibbsBlock`
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml`: Source layer gibbs config
+
+**Tests:** 12 new gibbs tests, all pass. 60 total passing, 0 new failures.
+
+### Smoke run results — californiav3 Source layer (150–400m)
+- **34 windows**, 32/34 pass RMSRE <5% (94%)
+- **Median RMSRE: 2.54%** (matern baseline: 3.05%)
+- **Z range: 0.61–1.16** (some underconfidence at Z<0.9 in later windows)
+- **Runtime: 132s**
+- Audit CSV + plots in `AEResults/aelogs/californiav3_..._d150_400_3dgibbs_w45/`
+
+### Convergence warnings (signals for Gemini)
+- `time_ls_init_days` hitting upper bound 45d frequently → widen to 60–90d
+- `d_transition_init_km` hitting upper bound 700km on many windows → widen to 1000–1500 km
+- `anisotropy_ratio` hitting lower bound 1.0 on ~40% of windows → optimizer wants
+  isotropic or zonal; consider allowing down to 0.5 for Source layer
+
+### Bugs fixed this session
+- Empty kriging plots: `scale_*` NaN on gibbs path fed into `plot_kriging_snapshot`.
+  Fix: store effective spatial scale (sigmoid at median dist_to_coast → degrees) so
+  the snapshot function has real values. **Needs re-run to verify fix.**
+
+---
+
 ## 2026-05-26 (session 15) — Portfolio page polished + MLOps section added
 
 ### Summary

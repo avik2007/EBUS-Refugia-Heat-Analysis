@@ -1069,3 +1069,221 @@ def test_backfill_metadata_assumed_fields_present(tmp_path):
             f"{field} missing from assumed_fields"
     # run_id-derived fields must NOT appear in assumed
     assert "region" not in cfg.backfill_metadata.assumed_fields
+
+
+import numpy as np
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ebus_core.argoebus_gp_physics import GibbsKernel
+
+
+def test_gibbs_kernel_sigmoid_endpoints():
+    # The sigmoid lengthscale must approach l_min as d -> -inf and l_max as d -> +inf.
+    # At d == d_0 (the midpoint), the value must equal (l_min + l_max) / 2 exactly.
+    # Why: this defines the physical regime — coastal lengthscale near coast,
+    # offshore lengthscale far away, with a well-defined transition midpoint.
+    k = GibbsKernel(
+        l_min_km=100.0, l_max_km=400.0,
+        d_transition_init_km=300.0, d_transition_bounds_km=(50.0, 700.0),
+        k_steepness_init=0.01, k_steepness_bounds=(1e-4, 1.0),
+        anisotropy_lat_lon_ratio=2.0,
+        time_ls_init_days=30.0, time_ls_bounds_days=(15.0, 45.0),
+    )
+    # Endpoint behaviour
+    assert k._sigmoid_lengthscale(np.array([-1e6])) == \
+           pytest.approx(100.0, abs=1e-3)
+    assert k._sigmoid_lengthscale(np.array([1e6])) == \
+           pytest.approx(400.0, abs=1e-3)
+    # Midpoint
+    mid = k._sigmoid_lengthscale(np.array([300.0]))[0]
+    assert mid == pytest.approx(250.0, abs=1e-3)
+
+
+def test_gibbs_kernel_call_symmetry_and_psd():
+    # K(X, X) must be symmetric and positive semi-definite (smallest eigenvalue >= -tol).
+    rng = np.random.default_rng(42)
+    n = 5
+    lat_km = rng.uniform(-200, 200, n)
+    lon_km = rng.uniform(-200, 200, n)
+    time_scaled = rng.uniform(-1, 1, n)
+    dist_coast = rng.uniform(50, 600, n)
+    X = np.column_stack([lat_km, lon_km, time_scaled, dist_coast])
+
+    k = GibbsKernel(mode='3D')
+    K = k(X)
+    assert K.shape == (n, n)
+    assert np.allclose(K, K.T, atol=1e-10)
+    eigs = np.linalg.eigvalsh(K)
+    assert eigs.min() >= -1e-8, f"K not PSD; min eig {eigs.min()}"
+    assert np.allclose(np.diag(K), 1.0, atol=1e-10)
+
+
+def test_gibbs_kernel_reduces_to_matern_when_dist_constant():
+    # When all dist_to_coast are equal, symmetry and unit diagonal still hold.
+    rng = np.random.default_rng(0)
+    n = 4
+    lat_km = rng.uniform(-100, 100, n)
+    lon_km = rng.uniform(-100, 100, n)
+    time_scaled = rng.uniform(-1, 1, n)
+    dist_const = np.full(n, 300.0)
+    X = np.column_stack([lat_km, lon_km, time_scaled, dist_const])
+
+    k_gibbs = GibbsKernel(
+        l_min_km=100.0, l_max_km=400.0,
+        d_transition_init_km=300.0, k_steepness_init=0.01,
+        anisotropy_lat_lon_ratio=2.0, mode='3D',
+    )
+    K = k_gibbs(X)
+    assert np.allclose(K, K.T, atol=1e-10)
+    assert np.all(np.diag(K) == 1.0)
+
+
+def test_gibbs_kernel_anisotropy_2to1():
+    # With ratio=2, lon lengthscale is half lat. Same physical offset -> smaller K for lon.
+    X_lat = np.array([[0.0, 0.0, 0.0, 300.0], [50.0, 0.0, 0.0, 300.0]])
+    X_lon = np.array([[0.0, 0.0, 0.0, 300.0], [0.0, 50.0, 0.0, 300.0]])
+    k = GibbsKernel(anisotropy_lat_lon_ratio=2.0, mode='3D')
+    K_lat = k(X_lat)
+    K_lon = k(X_lon)
+    assert K_lat[0, 1] > K_lon[0, 1] + 1e-6
+
+
+def test_gibbs_kernel_anisotropy_ratio_is_learnable():
+    # Setting theta with a different anisotropy_ratio must change _anisotropy_ratio
+    # and affect the kernel matrix (K_lat vs K_lon gap should shrink near ratio=1).
+    k = GibbsKernel(anisotropy_lat_lon_ratio=2.0, mode='3D')
+    # Force ratio -> 1 via theta setter
+    theta_near_one = k.theta.copy()
+    theta_near_one[-1] = np.log(1.0)  # anisotropy is last in theta
+    k.theta = theta_near_one
+    assert k._anisotropy_ratio == pytest.approx(1.0, rel=1e-9)
+    X_lat = np.array([[0.0, 0.0, 0.0, 300.0], [50.0, 0.0, 0.0, 300.0]])
+    X_lon = np.array([[0.0, 0.0, 0.0, 300.0], [0.0, 50.0, 0.0, 300.0]])
+    K_lat = k(X_lat)
+    K_lon = k(X_lon)
+    # At ratio=1, lat and lon lengthscales are equal, so K values must be equal.
+    assert K_lat[0, 1] == pytest.approx(K_lon[0, 1], rel=1e-6)
+
+
+def test_gibbs_kernel_theta_roundtrip():
+    # theta round-trips through setter: length 4 in 3D (d_0, k, time_ls, anisotropy).
+    k = GibbsKernel(mode='3D')
+    assert k.theta.shape == (4,)
+    new_theta = np.log(np.array([200.0, 0.005, 25.0, 1.5]))
+    k.theta = new_theta
+    assert np.allclose(k.theta, new_theta, atol=1e-12)
+    assert k._d0 == pytest.approx(200.0, rel=1e-9)
+    assert k._k == pytest.approx(0.005, rel=1e-9)
+    assert k._time_ls == pytest.approx(25.0, rel=1e-9)
+    assert k._anisotropy_ratio == pytest.approx(1.5, rel=1e-9)
+
+
+def test_gibbs_kernel_bounds_log_space():
+    k = GibbsKernel(mode='3D')
+    b = k.bounds
+    assert b.shape == (4, 2)
+    assert b[0, 0] == pytest.approx(np.log(50.0), abs=1e-9)
+    assert b[0, 1] == pytest.approx(np.log(700.0), abs=1e-9)
+    assert b[3, 0] == pytest.approx(np.log(1.0), abs=1e-9)
+    assert b[3, 1] == pytest.approx(np.log(4.0), abs=1e-9)
+
+
+def test_gibbs_kernel_clone_with_theta():
+    k = GibbsKernel(mode='3D', l_min_km=100.0, l_max_km=400.0)
+    new_theta = np.log(np.array([175.0, 0.02, 35.0, 1.8]))
+    k2 = k.clone_with_theta(new_theta)
+    assert k2 is not k
+    assert k2._d0 == pytest.approx(175.0, rel=1e-9)
+    assert k2._anisotropy_ratio == pytest.approx(1.8, rel=1e-9)
+    assert k2.l_min_km == 100.0
+    assert k._d0 == pytest.approx(300.0, rel=1e-9)
+
+
+def test_gibbs_kernel_2d_mode_theta_shape():
+    # 2D mode: theta = [log(d_0), log(k), log(anisotropy)], length 3.
+    k = GibbsKernel(mode='2D')
+    assert k.theta.shape == (3,)
+    assert k.bounds.shape == (3, 2)
+
+
+def test_gibbs_kernel_gp_fit_smoke():
+    # GaussianProcessRegressor with GibbsKernel + _gibbs_optimizer fits without errors.
+    from sklearn.gaussian_process import GaussianProcessRegressor
+    from sklearn.gaussian_process.kernels import ConstantKernel, WhiteKernel
+    from ebus_core.argoebus_gp_physics import _gibbs_optimizer
+
+    rng = np.random.default_rng(7)
+    n = 30
+    lat_km = rng.uniform(-200, 200, n)
+    lon_km = rng.uniform(-200, 200, n)
+    time_scaled = rng.uniform(-1, 1, n)
+    dist_coast = rng.uniform(20, 600, n)
+    X = np.column_stack([lat_km, lon_km, time_scaled, dist_coast])
+    y = 0.01 * lat_km + 0.02 * lon_km + rng.normal(0, 0.05, n)
+
+    kernel = ConstantKernel(1.0, "fixed") * GibbsKernel(mode='3D') + WhiteKernel(
+        noise_level=0.1, noise_level_bounds=(1e-5, 1e1)
+    )
+    gp = GaussianProcessRegressor(
+        kernel=kernel, optimizer=_gibbs_optimizer,
+        n_restarts_optimizer=0, alpha=0.0,
+    )
+    gp.fit(X, y)
+    y_pred, y_std = gp.predict(X, return_std=True)
+    assert y_pred.shape == y.shape
+    assert not np.any(np.isnan(y_pred))
+    assert not np.any(np.isnan(y_std))
+
+
+def test_analyze_rolling_correlations_gibbs_branch():
+    # analyze_rolling_correlations(kernel_type='gibbs') must run end-to-end on a
+    # synthetic window, return >= 1 result row, and record gibbs-specific columns
+    # (d_transition_km, k_steepness, anisotropy_ratio) within optimiser bounds.
+    import pandas as pd
+    from ebus_core.argoebus_gp_physics import analyze_rolling_correlations
+
+    rng = np.random.default_rng(11)
+    n = 80
+    lat = rng.uniform(33, 45, n)
+    lon = rng.uniform(-130, -118, n)
+    time_bin = rng.uniform(0, 60, n)
+    dist_to_coast_km = rng.uniform(20, 800, n)
+    ohc_per_m = (
+        1e9 + 5e6 * lat + 3e6 * lon
+        + 1e6 * np.exp(-dist_to_coast_km / 200.0)
+        + rng.normal(0, 1e6, n)
+    )
+    df = pd.DataFrame({
+        'lat_bin': lat, 'lon_bin': lon, 'time_bin': time_bin,
+        'dist_to_coast_km': dist_to_coast_km, 'ohc_per_m': ohc_per_m,
+        'platform_number': rng.integers(1000, 1100, n),
+    })
+
+    gibbs_params = {
+        'l_min_km': 100.0, 'l_max_km': 400.0,
+        'd_transition_init_km': 300.0,
+        'd_transition_bounds_km': (50.0, 700.0),
+        'k_steepness_init': 0.01,
+        'k_steepness_bounds': (1.0e-4, 1.0),
+        'anisotropy_lat_lon_ratio': 2.0,
+        'anisotropy_lat_lon_ratio_bounds': (1.0, 4.0),
+    }
+
+    results_df, _ = analyze_rolling_correlations(
+        df=df, feature_cols=['lat_bin', 'lon_bin'],
+        target_col='ohc_per_m', time_col='time_bin',
+        window_size_days=45, step_size_days=10,
+        auto_tune=True, mode='3D',
+        kernel_type='gibbs',
+        gibbs_params=gibbs_params,
+        time_ls_bounds_days=(15.0, 45.0),
+    )
+    assert len(results_df) >= 1
+    assert 'd_transition_km' in results_df.columns
+    assert 'k_steepness' in results_df.columns
+    assert 'anisotropy_ratio' in results_df.columns
+    row = results_df.iloc[0]
+    assert 50.0 <= row['d_transition_km'] <= 700.0
+    assert 1e-4 <= row['k_steepness'] <= 1.0
+    assert 1.0 <= row['anisotropy_ratio'] <= 4.0

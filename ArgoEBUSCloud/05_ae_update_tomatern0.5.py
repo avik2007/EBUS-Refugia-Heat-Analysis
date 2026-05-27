@@ -57,6 +57,8 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
                               spatial_ls_upper_bound=10,
                               time_ls_bounds_days=(15.0, 45.0),
                               step_size_days=10,
+                              kernel_type="matern0.5",
+                              gibbs_params=None,
                               **_):
     # --- 1. SETUP & HOUSEKEEPING ---
     # get_ae_config builds the run_id used to locate the S3 parquet. The S3
@@ -93,7 +95,15 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
     # It differs from config['run_id'] so outputs land in a separate folder
     # and do not overwrite the deprecated 2D-RBF results.
     # run_suffix further differentiates experiment variants from the baseline.
-    output_run_id = config['run_id'] + "_3dmatern_w45" + run_suffix
+    # Suffix encodes the kernel so gibbs and matern outputs land in separate folders,
+    # enabling side-by-side audit comparison without overwriting matern baselines.
+    if kernel_type == 'gibbs':
+        kernel_suffix = '_3dgibbs_w45'
+    elif kernel_type == 'matern0.5':
+        kernel_suffix = '_3dmatern_w45'
+    else:
+        kernel_suffix = f'_3d{kernel_type}_w45'
+    output_run_id = config['run_id'] + kernel_suffix + run_suffix
 
     # Ensure AEResults directories exist.
     # AEResults lives one level above ArgoEBUSCloud/, at ArgoEBUSAnalysis/AEResults/.
@@ -122,13 +132,14 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
         feature_cols=['lat_bin', 'lon_bin'],
         target_col='ohc_per_m',
         time_col='time_bin',
-        window_size_days=45,              # C2: wider than baseline 30d
-        step_size_days=step_size_days,    # default 15d; pass 10d for Experiment T1
+        window_size_days=45,
+        step_size_days=step_size_days,
         auto_tune=True,
-        mode='3D',                        # add time as third GP input dimension
-        kernel_type='matern0.5',          # Exponential / OU kernel
-        time_ls_bounds_days=time_ls_bounds_days,        # physical-day bounds on temporal scale
-        spatial_ls_upper_bound=spatial_ls_upper_bound,  # upper bound on spatial scale (scaled units)
+        mode='3D',
+        kernel_type=kernel_type,
+        gibbs_params=gibbs_params,
+        time_ls_bounds_days=time_ls_bounds_days,
+        spatial_ls_upper_bound=spatial_ls_upper_bound,
     )
 
     # --- 3. SAVE KRIGING SNAPSHOTS TO AEResults/aeplots ---

@@ -192,10 +192,14 @@ class KernelGibbsBlock(BaseModel):
     # k_steepness_bounds: (lower, upper) optimisation bounds for k
     k_steepness_bounds: Tuple[float, float] = (1.0e-4, 1.0)
 
-    # anisotropy_lat_lon_ratio: ratio of lat lengthscale to lon lengthscale.
+    # anisotropy_lat_lon_ratio: initial value for the learnable lat/lon ratio.
     # > 1 indicates meridional (current-driven) structure; < 1 indicates zonal
     # (atmospheric-forcing) structure. Physically expected to increase with depth.
     anisotropy_lat_lon_ratio: float = 2.0
+    # anisotropy_lat_lon_ratio_bounds: (lower, upper) optimisation bounds for ratio.
+    # Lower=1.0: ratio can never become more zonal than isotropic (physically defensible).
+    # Upper=4.0: prevents the optimizer producing implausibly elongated meridional features.
+    anisotropy_lat_lon_ratio_bounds: Tuple[float, float] = (1.0, 4.0)
 
     # climatology_source: which climatology dataset was used to build priors
     climatology_source: str = "roemmich-gilson-v3"

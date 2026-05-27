@@ -1,7 +1,73 @@
-## 2026-05-03 — [ACTIVE] californiav3 Matérn Baseline Run (Path A)
+## 2026-05-26 — [ACTIVE #1] Brief Gemini on Gibbs 3-layer results
+
+**Priority:** Do this first next session before any further tuning.
+
+Gemini needs to see the full Gibbs vs Matérn comparison and weigh in on:
+1. **Z-score calibration improvement**: Gibbs collapses std_Z to mean~0.98, std~0.07–0.10 across all layers.
+   Matérn had mean 1.13–1.72, std up to 2.63, max 11.35 (Background Blob windows).
+2. **RMSRE gains**: Skin 4.25%→3.49%, Source 3.05%→2.54%, Background 2.50%→1.84%.
+3. **Time persistence now learnable**: Matérn was pegged at 45d (zero variance). Gibbs: Skin 44d, Source 54d, Background 58d — increasing with depth, consistent with stealth warming hypothesis.
+4. **Remaining convergence warnings** (bounds still being hit):
+   - `d_transition_bounds_km` upper bound 700km saturating on some windows → widen to 1000–1500km?
+   - `anisotropy_lat_lon_ratio` lower bound 1.0 hit on ~40% of Source windows → allow down to 0.5?
+5. **Science verdict**: Is Gibbs ready to be called the canonical kernel? Or more tuning first?
+
+Audit CSVs at `AEResults/aelogs/californiav3_..._d{layer}_3dgibbs_w45/audit_*.csv` for all 3 layers.
+
+Last updated: 2026-05-26 (session 17)
+
+---
+
+## 2026-05-26 — [ACTIVE #2] Update github.io portfolio with Gibbs results
+
+After Gemini sign-off, update `docs/index.html`:
+- Replace Matérn baseline metrics with Gibbs numbers in the Results section
+- Add 3-layer Gibbs vs Matérn comparison table (RMSRE + Z-score)
+- Add new kriging heat map snapshots (Gibbs versions) if visually cleaner
+- Update "What's Next" Gibbs v2 card to reflect implementation complete
+
+Last updated: 2026-05-26 (session 17)
+
+---
+
+## 2026-05-26 — [DONE] Presentation Slides
+
+**Status:** COMPLETE (done before session 17).
+
+Last updated: 2026-05-26 (session 17)
+
+---
+
+## 2026-05-26 — [DONE] Gibbs Post-Implementation: Validate, Scale, Tune
+
+**Status:** COMPLETE (session 17, 2026-05-26).
+- Temporal persistence plot fix: `scale_time_bin` was NaN on gibbs path → now stores `time_ls_days`
+- `--force-overwrite` bug fixed in `runner.py` (verdict unbound, collision raised before delete)
+- `time_ls_bounds_days` widened 45→90d in all 3 gibbs configs
+- Skin + Background gibbs configs created and run
+- Full 3-layer comparison: Gibbs beats Matérn on RMSRE and Z-calibration across all layers
+
+Last updated: 2026-05-26 (session 17)
+
+---
+
+## 2026-05-04 — [DONE] RG-Gibbs Kernel Implementation
+
+**Status:** COMPLETE. All 9 tasks done (session 16, 2026-05-26).
+- `GibbsKernel` in `argoebus_gp_physics.py`: sigmoid l(x), learnable `[d_0, k, time_ls, anisotropy_ratio]`
+- 12 new TDD tests (60 total, 5 pre-existing CLI failures unchanged)
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml` + smoke run: 32/34 pass, RMSRE 2.54%
+- Kriging NaN bug fixed (effective scale at median dist_to_coast stored in `scale_lat_bin/lon_bin`)
+- anisotropy_ratio made learnable (bounds 1.0–4.0); `_gibbs_optimizer` uses scipy L-BFGS-B + jac='2-point'
+
+Last updated: 2026-05-26 (session 16)
+
+---
+
+## 2026-05-03 — [DONE] californiav3 Matérn Baseline Run (Path A)
 
 **Context:** Float census done (09c, committed). californiav3 bounds confirmed in `ae_utils.py`
-(Lat [30,48], Lon [-135,-115]). Gibbs kernel deferred until baseline validates the domain.
+(Lat [30,48], Lon [-135,-115]).
 
 **Steps:**
 1. [x] Write 3 analysis YAMLs + 3 ingestion YAMLs in `configs/californiav3/` — all validate clean.
@@ -14,24 +80,18 @@
        Background 500-1000m: median RMSRE 2.50%, max 3.92%, 35/35 pass. Z chronic low + extreme spikes 11.35, 9.28, 9.11 (Blob onset).
        Domain fix validated: Source improved from 8.13% (californiav2) → 3.05%.
        Cross-layer Z pattern: stationary Matérn cannot adapt near shelf-break — dist_to_coast Gibbs motivated.
-5. [ ] Share results with Gemini for science verdict before proceeding to Gibbs.
-       Key questions:
-       - Confirm Background Z-spikes (9-11) are Pacific Blob onset (Jan-Feb + Sep 2015).
-       - Confirm Background mid-year Ratio >1 (anomalous for deep layer — expected zonal).
-       - Green-light dist_to_coast as l(x) form for GibbsKernel.
+5. [x] Share results with Gemini for science verdict — DONE 2026-05-04. Verdict: Gibbs green-lit
+       with dist_to_coast as l(x) coordinate. Background Z-spikes confirmed as Pacific Blob.
+       See `argo_gemini_actions/AE_gemini_recentactions.md` 2026-05-04 entry.
 
-**Pipeline fixes landed this session (54 tests still passing):**
+**Pipeline fixes landed in session 10 (54 tests still passing):**
 - `02_ae_cloud_run.py`: `run_ingestion_pipeline()` wrapper (absorbs runner extras)
 - `02_ae_cloud_run.py`: ERDDAP URL — encode `>/%3E`, `</%3C`; point to `erddap.ifremer.fr`
 - `02_ae_cloud_run.py`: try/finally cluster cleanup wraps all post-cluster code
 - `02_ae_cloud_run.py`: `client.run(_warm_cartopy_cache)` pre-warms coastline on workers
 - `05_ae_update_tomatern0.5.py`: `**_` absorbs unknown runner kwargs (mode, kernel_type, etc.)
 
-**Gibbs kernel (deferred):** Implement after baseline confirms domain is healthy.
-Spec: `docs/superpowers/specs/2026-04-26-rg-gibbs-l-x-directive.md`
-Gap: `GibbsKernel` class missing from `argoebus_gp_physics.py`; runner dispatch ready.
-
-Last updated: 2026-05-03 (session 10)
+Last updated: 2026-05-04 (session 12)
 
 ---
 
