@@ -2,6 +2,41 @@
 
 ---
 
+## 2026-07-17 — Gibbs vs Matérn Statistical Audit Completed (Diebold-Mariano & Block Bootstrap)
+
+**Action:** Implemented a rigorous kernel comparison script (`compare_kernels.py`) to run Diebold-Mariano and overlapping block-bootstrap significance tests on the Matérn vs. Gibbs validation metrics across all scientific layers. Updated task tracking.
+
+### 1. Robust Kernel Performance Audit (Diebold-Mariano Test with Newey-West HAC lag=4)
+*   **Skin Layer (0-100m):** Gibbs kernel achieved a statistically significant **12.86% relative median RMSRE improvement** (median RMSRE 4.25% → 3.71%, DM-stat = 3.193, p-val = 7.05e-04). Uncertainty calibration collapsed the high Matérn Z-score variance to an ideal mean of **0.9958 ± 0.0883**.
+*   **Source Layer (150-400m):** Gibbs achieved a **13.53% relative median RMSRE improvement** (median 3.05% → 2.63%, DM-stat = 2.051, p-val = 2.01e-02, 95% block-bootstrap CI [-0.00008, 0.00510]). Uncertainty calibration was stabilized to **0.9816 ± 0.0834**.
+*   **Background Layer (500-1000m):** Gibbs achieved a massive **18.87% relative median RMSRE improvement** (median 2.50% → 2.03%, DM-stat = 5.068, p-val = 2.01e-07). It successfully resolved the extreme non-stationarity spikes associated with the Pacific Blob, reducing Z-score variance from 2.6299 to a perfectly calibrated **0.9664 ± 0.1002**.
+*   **Verdict:** The Gibbs Non-Stationary Kernel is **statistically superior** across all layers, and successfully resolves coastal upwelling gradients and large-scale non-stationarities.
+
+### 2. Physical Regime Transition & Temporal Persistence Insights
+*   **Coast-to-offshore transition ($d_0$):** Found to be **204 km** in the Skin layer and **227 km** in the Source layer, aligning perfectly with the spatial width of coastal upwelling filaments. In the Background layer, $d_0$ pegged at the upper bound of **700 km**, indicating that deep-ocean dynamics do not exhibit the same sharp coastal transition, or that data sparsity at depth demands a broad spatial smoothing scale.
+*   **Temporal persistence saturation:** Following the units bug fix, `time_ls_days` pegged at the upper limit (**200 days**) in the majority of windows across **all three layers**. This confirms that anomaly memory (persistence of temperature anomalies, such as the Marine Heatwave/Blob) is unresolvable within a 45-day rolling window. It strongly supports the "ocean anomaly memory exceeds a month and a half" hypothesis at all depths.
+*   **Recommendation:** For deeper layers, widening the rolling window (e.g., to 90 or 120 days) is highly recommended. For the Skin layer, the 45-day window is retained to avoid smoothing out rapid seasonal transitions, accepting that anomaly persistence will remain pegged.
+
+---
+
+## 2026-07-07 — Mixed layer/buoyancy question logged; kernel significance testing methodology defined
+
+**Action:** No code touched this session — planning/science discussion only, closed out for `/clear`.
+
+### 1. Interviewer question logged for science review
+*   Interviewer asked whether stealth warming could deepen the mixed layer / alter boundary-layer buoyancy via weakened stratification below the mixed layer (Source Layer warming → reduced N² at the pycnocline → easier wind/wave mixing → deeper MLD).
+*   Assessed: plausible but indirect (Undercurrent core ~100–300m vs. mixed layer ~20–50m in CCS; needs a mixing/eddy-pump step). Does not change the 3-layer depth-defined design.
+*   **Added to `AE_gemini_todo.md` (Priority 2):** research item for Gemini to consider, plus candidate diagnostic (N², MLD) to test the mechanism empirically via Argo profiles.
+
+### 2. Kernel comparison significance testing — methodology settled (not yet implemented)
+*   Question: how to tell if Gibbs kernel's RMSRE improvement over Matern 5/2 is real vs. noise.
+*   **Finding:** rolling windows in the audit CSVs overlap (`step_size_days` < `window_size_days`), so per-window RMSRE values are autocorrelated — a plain paired t-test/Wilcoxon would overstate significance.
+*   **Decision:** primary test = Diebold-Mariano (HAC/Newey-West variance) on the per-window RMSRE differential; secondary/sanity = paired Wilcoxon (flagged as optimistic); effect size = block-bootstrap CI (block size ≈ window/step ratio).
+*   **Recorded as a standing reminder** in both `AE_gemini_lessons.md` and `argo_claude_actions/AE_claude_lessons.md`: use significance tests, not raw summary-stat deltas, to judge whether a pipeline variant actually improved.
+*   Implementation (MLD/N² diagnostic functions in `argoebus_thermodynamics.py`, kernel significance-test script) planned but deliberately deferred — no files touched.
+
+---
+
 ## 2026-04-26 — MLOps Spec Review & FX2 Science Verdict
 
 **Action:** Completed the comprehensive review of the MLOps Foundation design and issued a science verdict on the FX2 run regressions.
@@ -96,3 +131,22 @@
 - Defined the **longitude-dependent lengthscale** $l(lon)$ to resolve sharp coastal gradients (100km) while smoothing offshore (400km).
 - Integrated the **Roemmich-Gilson Anchor** as the prior mean function to ensure statistical integrity.
 - Saved the updated blueprint to `argo_claude_actions/brainstorming/RG_Gibbs_NonStationary_Model_Plan.md`.
+
+---
+
+## 2026-05-04 — californiav3 Science Review & Gibbs Green-light
+
+**Action:** Conducted a detailed science review of Claude's `californiav3` results and issued a formal "Green-light" for the Gibbs Non-Stationary Kernel implementation.
+
+### 1. californiav3 Science Verdict
+*   **Source Layer (150-400m) Fix:** Confirmed the median RMSRE dropped from **8.13% (v2)** to **3.05% (v3)**. This validates that the Source layer sparsity regression was a domain-clipping artifact, now resolved by the wider 35^\circ W$ buffer.
+*   **Scientific Consistency:** The Source layer exhibits the predicted **meridional anisotropy** ({lat} > l_{lon}$), a clear signature of the California Undercurrent.
+*   **Stationarity Audit:** Background layer Z-score spikes (Z > 9.0) in Jan-Feb and Sep 2015 are confirmed as **Pacific Blob non-stationarity events**. The stationary Matérn's failure to estimate uncertainty here is the primary motivation for the Gibbs pivot.
+*   **Time Scales:** `scale_time_bin` saturation at 45 days persists across all layers, confirming ocean memory > 45 days at depth.
+
+### 2. Gibbs Kernel Green-light
+*   **Verdict:** Approved the transition to the **Gibbs Non-Stationary Kernel**.
+*   **Motivation:** The "chronic" Z-score pattern (0.5–0.9) near the shelf break indicates the stationary model is struggling with the coastal-offshore regime transition.
+*   **Implementation Directive:** Use `dist_to_coast` as the coordinate for the learnable sigmoid lengthscale function (x)$, as planned in the RG-Gibbs directive.
+
+---

@@ -71,6 +71,15 @@ class GibbsKernel(Kernel):
         anisotropy_lat_lon_ratio    — l_lat / l_lon (fixed; default 2.0)
         time_ls_init_days           — initial Matern temporal lengthscale (days)
         time_ls_bounds_days         — (lower, upper) bounds for temporal lengthscale
+        window_size_days            — physical width (days) of the rolling window that
+                                       X's time column was normalized against (time_scaled
+                                       = (t - window_center) / (window_size_days / 2), so
+                                       time_scaled spans [-1, +1] edge to edge). Needed to
+                                       convert dt back to days before dividing by time_ls,
+                                       which is defined in days. Mismatching this against
+                                       the window_size_days actually used to build X silently
+                                       breaks the day-unit meaning of time_ls (see
+                                       test_gibbs_kernel_time_ls_converts_normalized_dt_to_days).
         mode                        — '2D' or '3D'
 
     LEARNABLE THETA (sklearn convention: log-space):
@@ -90,6 +99,7 @@ class GibbsKernel(Kernel):
         anisotropy_lat_lon_ratio_bounds=(1.0, 4.0),
         time_ls_init_days=30.0,
         time_ls_bounds_days=(15.0, 45.0),
+        window_size_days=90.0,
         mode='3D',
     ):
         # Store all constructor args verbatim — sklearn requires this for
@@ -104,6 +114,7 @@ class GibbsKernel(Kernel):
         self.anisotropy_lat_lon_ratio_bounds = anisotropy_lat_lon_ratio_bounds
         self.time_ls_init_days = time_ls_init_days
         self.time_ls_bounds_days = time_ls_bounds_days
+        self.window_size_days = window_size_days
         self.mode = mode
 
         # Live (mutable) parameter values — these change as the optimiser
@@ -185,6 +196,7 @@ class GibbsKernel(Kernel):
             anisotropy_lat_lon_ratio_bounds=self.anisotropy_lat_lon_ratio_bounds,
             time_ls_init_days=self.time_ls_init_days,
             time_ls_bounds_days=self.time_ls_bounds_days,
+            window_size_days=self.window_size_days,
             mode=self.mode,
         )
         cloned.theta = theta
@@ -203,6 +215,7 @@ class GibbsKernel(Kernel):
             "anisotropy_lat_lon_ratio_bounds": self.anisotropy_lat_lon_ratio_bounds,
             "time_ls_init_days": self.time_ls_init_days,
             "time_ls_bounds_days": self.time_ls_bounds_days,
+            "window_size_days": self.window_size_days,
             "mode": self.mode,
         }
 
@@ -289,9 +302,14 @@ class GibbsKernel(Kernel):
         K_spatial = prefactor * np.exp(exponent)
 
         # Time factor: stationary Matern(nu=0.5) = exp(-|Δt| / time_ls).
+        # time_X/time_Y are window-normalized ([-1, +1] edge to edge; see
+        # analyze_rolling_correlations' time_scaled), but time_ls is defined in
+        # physical days. Convert dt back to days before dividing, so time_ls means
+        # what its name and units (time_ls_init_days, time_ls_bounds_days) claim.
         if self.mode == '3D':
-            dt = np.abs(time_X[:, np.newaxis] - time_Y[np.newaxis, :])
-            K = K_spatial * np.exp(-dt / max(self._time_ls, 1e-9))
+            dt_normalized = np.abs(time_X[:, np.newaxis] - time_Y[np.newaxis, :])
+            dt_days = dt_normalized * (self.window_size_days / 2.0)
+            K = K_spatial * np.exp(-dt_days / max(self._time_ls, 1e-9))
         else:
             K = K_spatial
 
@@ -1559,6 +1577,11 @@ def analyze_rolling_correlations(df,
             if kernel_type == 'gibbs':
                 gp_kw = dict(gibbs_params or {})
                 gp_kw['mode'] = mode
+                # window_size_days is derived from this window, not user-configurable
+                # via gibbs_params -- always set explicitly so GibbsKernel's dt-to-days
+                # conversion matches the time_scaled normalization actually used to
+                # build X (see analyze_rolling_correlations' time_scaled assignment).
+                gp_kw['window_size_days'] = window_size_days
                 if mode == '3D' and time_ls_bounds_days is not None:
                     gp_kw.setdefault('time_ls_bounds_days', tuple(time_ls_bounds_days))
                     gp_kw.setdefault(

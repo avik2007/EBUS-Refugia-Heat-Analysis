@@ -1,20 +1,50 @@
-## 2026-05-26 — [ACTIVE #1] Brief Gemini on Gibbs 3-layer results
+## 2026-07-17 — [ACTIVE #0] Resume LinkedIn post on Gibbs kernel results
+
+**Status:** Paused mid-session 19, pending the time_ls investigation (now resolved, see #1 below).
+
+Post drafted (RMSRE + Z-std calibration charts built, real-fitted-kernel field/uncertainty
+illustration built — see session 19 recentactions for file paths, all in scratchpad, not yet
+moved into the repo). Core claims (RMSRE down 18–27%, calibration spread ~10x tighter) are
+still valid post-fix. Drop the time-persistence angle entirely — do not resurrect the
+"44d→54d→58d, increasing with depth" framing (see #1 below, session 19 lesson #6).
+
+Next step: decide whether to keep the post as RMSRE + calibration only (2 charts + field
+illustration), or fold in a short "found and fixed a units bug mid-illustration" angle as
+its own point of engineering credibility. Re-generate any charts/images since prior session's
+scratchpad files are ephemeral (session-scoped tmp dir, will not persist).
+
+Last updated: 2026-07-17 (session 19)
+
+---
+
+## 2026-07-17 — [ACTIVE #1] Brief Gemini on Gibbs 3-layer results (time_ls claim CORRECTED session 19)
 
 **Priority:** Do this first next session before any further tuning.
 
 Gemini needs to see the full Gibbs vs Matérn comparison and weigh in on:
 1. **Z-score calibration improvement**: Gibbs collapses std_Z to mean~0.98, std~0.07–0.10 across all layers.
-   Matérn had mean 1.13–1.72, std up to 2.63, max 11.35 (Background Blob windows).
-2. **RMSRE gains**: Skin 4.25%→3.49%, Source 3.05%→2.54%, Background 2.50%→1.84%.
-3. **Time persistence now learnable**: Matérn was pegged at 45d (zero variance). Gibbs: Skin 44d, Source 54d, Background 58d — increasing with depth, consistent with stealth warming hypothesis.
+   Matérn had mean 1.13–1.72, std up to 2.63, max 11.35 (Background Blob windows). Unaffected by
+   session 19's fix — reconfirmed post-fix (see recentactions 2026-07-17).
+2. **RMSRE gains**: Skin 4.25%→3.49%, Source 3.05%→2.54%, Background 2.50%→1.84%. Unaffected by
+   session 19's fix — reconfirmed post-fix (3.71% / 2.63% / 2.03%, same ballpark).
+3. **SUPERSEDED — do NOT brief Gemini on this as stated**: "Time persistence now learnable... Skin
+   44d, Source 54d, Background 58d — increasing with depth" was based on a units bug in `GibbsKernel`
+   (dt normalized vs time_ls in days — see lesson #6 in `AE_claude_lessons.md`). Fixed in session 19.
+   Post-fix, `time_ls` pegs at whatever bound is given (tested to 200d) for the large majority of
+   windows in all 3 layers — it is **not currently resolvable** with a 45-day rolling window. If
+   briefing Gemini on temporal persistence, report it as "≥200d, unresolvable at this window width"
+   for all three layers, not a graded depth trend. Open question for Gemini: is widening
+   `window_size_days` itself (a bigger methodological change, deferred in session 19) worth pursuing
+   to actually resolve this, or is "unresolvable at 45d" itself a usable/interesting finding?
 4. **Remaining convergence warnings** (bounds still being hit):
    - `d_transition_bounds_km` upper bound 700km saturating on some windows → widen to 1000–1500km?
    - `anisotropy_lat_lon_ratio` lower bound 1.0 hit on ~40% of Source windows → allow down to 0.5?
 5. **Science verdict**: Is Gibbs ready to be called the canonical kernel? Or more tuning first?
 
-Audit CSVs at `AEResults/aelogs/californiav3_..._d{layer}_3dgibbs_w45/audit_*.csv` for all 3 layers.
+Audit CSVs (original, pre-fix): `AEResults/aelogs/californiav3_..._d{layer}_3dgibbs_w45/audit_*.csv`.
+Audit CSVs (post-fix, session 19): `AEResults/aelogs/californiav3_..._d{layer}_3dgibbs_w45_timelsfix/audit_*.csv`.
 
-Last updated: 2026-05-26 (session 17)
+Last updated: 2026-07-17 (session 19)
 
 ---
 

@@ -1179,6 +1179,30 @@ def test_gibbs_kernel_theta_roundtrip():
     assert k._anisotropy_ratio == pytest.approx(1.5, rel=1e-9)
 
 
+def test_gibbs_kernel_time_ls_converts_normalized_dt_to_days():
+    # time_ls_init_days / time_ls_bounds_days are documented and recorded (audit CSV
+    # 'time_ls_days') as PHYSICAL DAYS. The time column X[:, -2] fed into __call__ is
+    # window-normalized to [-1, +1] (see analyze_rolling_correlations: time_scaled =
+    # (time_raw - window_center) / half_window). Two points at opposite edges of the
+    # window (time_scaled=-1 and +1) are `window_size_days` days apart in reality, not
+    # 2.0 days apart -- so the temporal factor must be exp(-window_size_days / time_ls),
+    # not exp(-2.0 / time_ls). Same lat/lon/dist_to_coast on both points isolates the
+    # temporal factor exactly (spatial factor = 1 for identical spatial coordinates).
+    window_size_days = 45.0
+    time_ls = 15.0
+    k = GibbsKernel(
+        anisotropy_lat_lon_ratio=2.0, mode='3D',
+        time_ls_init_days=time_ls, window_size_days=window_size_days,
+    )
+    X = np.array([
+        [0.0, 0.0, -1.0, 300.0],
+        [0.0, 0.0, 1.0, 300.0],
+    ])
+    K = k(X)
+    expected_temporal_factor = np.exp(-window_size_days / time_ls)
+    assert K[0, 1] == pytest.approx(expected_temporal_factor, rel=1e-9)
+
+
 def test_gibbs_kernel_bounds_log_space():
     k = GibbsKernel(mode='3D')
     b = k.bounds
@@ -1284,6 +1308,9 @@ def test_analyze_rolling_correlations_gibbs_branch():
     assert 'k_steepness' in results_df.columns
     assert 'anisotropy_ratio' in results_df.columns
     row = results_df.iloc[0]
-    assert 50.0 <= row['d_transition_km'] <= 700.0
+    # Optimizer pegs d_transition_km at the lower bound for this synthetic data
+    # (see ConvergenceWarning); log-space bound round-tripping through exp() can
+    # land an epsilon below 50.0, so compare with float tolerance, not a hard >=.
+    assert 50.0 - 1e-6 <= row['d_transition_km'] <= 700.0
     assert 1e-4 <= row['k_steepness'] <= 1.0
     assert 1.0 <= row['anisotropy_ratio'] <= 4.0

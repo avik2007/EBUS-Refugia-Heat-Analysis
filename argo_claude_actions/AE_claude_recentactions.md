@@ -2,6 +2,144 @@
 
 ---
 
+## 2026-07-17 (session 19) — LinkedIn post drafted, RBF-proxy + GibbsKernel time_ls bugs found and fixed
+
+### Summary
+Started as a LinkedIn-post content task (Gibbs kernel results). Ended up finding and fixing a real
+units bug in `GibbsKernel`, discovering a second window-design limitation, and re-running all 3
+Gibbs layers. Post is drafted but paused pending final framing decision (see todo #0).
+
+### 1. LinkedIn post drafting + chart accuracy corrections
+- Initial claim ("Gibbs drops variance 1 order of magnitude") verified against real data:
+  Z-score std (calibration), Matérn 1.05–2.63 → Gibbs 0.07–0.10, confirmed ~10–37x tighter.
+- Caught and corrected a mislabeling risk: user asked to relabel the Z-std chart as "error" —
+  flagged that Z-std is calibration, not prediction error (RMSRE only improved 18–27%, not 10x).
+  Resolved by building **two** charts instead of one, each honestly labeled to its own metric.
+- Built with `dataviz` skill conventions (validated categorical palette: blue=Matérn, green=Gibbs,
+  consistent across all charts this session).
+
+### 2. `plot_kriging_snapshot` RBF-proxy bug found (not fixed — out of scope, illustration-only)
+- User asked for an actual kriged-field + uncertainty map to accompany the post.
+- Traced `plot_kriging_snapshot` (`argoebus_gp_physics.py:1741`): it **always** reconstructs the
+  field as a single-lengthscale RBF proxy from one scalar `scale_lat_bin`/`scale_lon_bin` value,
+  regardless of whether the real run used RBF, Matérn, or Gibbs. For Gibbs, that scalar is the
+  sigmoid lengthscale evaluated at the window's *median* distance-to-coast — so the existing
+  snapshot PNGs cannot show Gibbs's actual non-stationary (distance-varying) structure.
+- Also confirmed via code trace: this proxy is visualization-only, never feeds back into
+  `rmsre`/`std_z`/the audit CSV — the real CV-scored numbers were never affected by this.
+- Wrote new standalone illustration code (scratchpad, not committed) that pulls the real raw
+  parquet from S3, reconstructs the *actual* fitted `GibbsKernel` / `Matern(nu=0.5)` per window
+  (fixed hyperparameters from the audit CSV, `optimizer=None`, no re-fit), and predicts on a grid
+  using `calculate_dist_to_coast` (`ae_utils.py`) for the grid's distance-to-coast values. Confirmed
+  this also incidentally fixes a second RBF-proxy defect: predicted-field colorbar ranges no longer
+  mismatch 2x between kernels (was an RBF-proxy artifact, not a real Matérn instability).
+
+### 3. GibbsKernel time_ls units bug — found, investigated, fixed (production code change)
+- While building the real-kernel illustration, traced `GibbsKernel.__call__` line by line and found
+  `dt` (from the window-normalized time column, range ≈[-1,+1]) was divided directly by
+  `self._time_ls` (physical days) — no conversion between the two ever happens anywhere in the file
+  (confirmed by exhaustive grep). The Matérn path does this conversion correctly
+  (`ls_time_scaled = scale_time_bin_days / half_window`) — used as the working-pattern control.
+- Used `systematic-debugging` skill. Empirical Phase-1 evidence on real window-9 data (californiav3
+  Source layer): Gibbs log-marginal-likelihood range across a 15–90d `time_ls` sweep was only 5.1
+  units, vs 62 units for the correctly-scaled Matérn-equivalent sweep — ~12x weaker sensitivity,
+  confirming the bug materially affects fitted behavior, not just cosmetics.
+- **Fix** (`ArgoEBUSCloud/ebus_core/argoebus_gp_physics.py`): added `window_size_days` constructor
+  param to `GibbsKernel` (threaded through `get_params`, `clone_with_theta`, and the `_build_kernel`
+  call site inside `analyze_rolling_correlations`); `__call__` now converts `dt` to days
+  (`dt_days = dt_normalized * window_size_days / 2.0`) before dividing by `time_ls`.
+- **TDD**: new test `test_gibbs_kernel_time_ls_converts_normalized_dt_to_days`
+  (`test_mlops_foundation.py`) written and confirmed failing (`TypeError`, param didn't exist) before
+  the fix, passing after. One pre-existing test (`test_analyze_rolling_correlations_gibbs_branch`)
+  needed a float-tolerance relaxation on a hard `>=50.0` bound check — confirmed via `git stash` that
+  it passed cleanly pre-fix and only failed post-fix due to floating-point boundary noise from the
+  optimizer's landing point shifting (not a fix defect). Full suite: 66 passed, 0 unrelated
+  regressions (from repo root; note `test_mlops_foundation.py`'s CLI subprocess tests assume repo
+  root as cwd, not `ArgoEBUSCloud/` — unrelated pre-existing behavior, not a bug).
+
+### 4. Gibbs 3-layer re-run + second finding: time_ls unresolvable at 45-day window
+- Re-ran all 3 layers (`configs/californiav3/californiav3_d{0_100,150_400,500_1000}_gibbs_timelsfix.yaml`,
+  `run_suffix: "_timelsfix"` — new output dirs, nothing overwritten) via `aebus_cli.py analyze`.
+- First re-run (bounds unchanged, `time_ls_bounds_days: [15,90]`): Skin layer pegged at the upper
+  bound in **34/34 windows**, zero variance — a hard-wall optimizer artifact, not a resolved value.
+- Widened bounds to `[15,200]`, re-ran all 3: still pegged in the large majority of windows
+  (Skin 34/34, Source 32/34, Background 33/34) — confirmed this is **not a bound-too-tight issue**,
+  it's a window-design limitation: a 45-day rolling window cannot identify temporal decorrelation
+  timescales this long, regardless of the ceiling given to the optimizer.
+- User decision: report `time_ls_days` as a floor ("≥200d, unresolvable within this window") for all
+  3 layers rather than chase a precise number further; do not widen `window_size_days` itself this
+  session (bigger methodological change, deferred).
+- **Result: RMSRE and Z-std/calibration numbers are essentially unchanged pre- vs post-fix** (see
+  table below) — the LinkedIn post's core claims survive untouched. Only the "time persistence
+  increases with depth: 44d→54d→58d" claim from session 17 is invalidated and must not be reused.
+
+| Layer | RMSRE (old → new) | Z-std (old → new) | time_ls (old claim → corrected) |
+|---|---|---|---|
+| Skin | 3.49% → 3.71% | 0.10 → 0.088 | 44d → ≥200d, unresolvable (34/34 pegged) |
+| Source | 2.54% → 2.63% | 0.10 → 0.083 | 54d → ≥200d, unresolvable (32/34 pegged, range 157–200) |
+| Background | 1.84% → 2.03% | 0.07 → 0.100 | 58d → ≥200d, unresolvable (33/34 pegged, range 75–200) |
+
+### 5. Repository hygiene
+- Updated `argo_claude_actions/AE_claude_lessons.md` — added lesson #6 (units-mismatch pattern +
+  root-cause + fix + downstream implications).
+- Updated `argo_claude_actions/AE_claude_todo.md` — corrected ACTIVE #1 (Gemini briefing item) to
+  flag the superseded time-persistence claim; added ACTIVE #0 for resuming the LinkedIn post.
+- New files: `configs/californiav3/californiav3_d{0_100,150_400,500_1000}_gibbs_timelsfix.yaml`;
+  new run outputs under `AEResults/aelogs/*_timelsfix/`. All additive — no existing files deleted
+  or overwritten.
+
+### Next steps (see top of `AE_claude_todo.md`)
+- Decide LinkedIn post framing (RMSRE + calibration only, vs. also including the bug-fix story) and
+  resume/finish it — scratchpad chart/image files from this session will not persist, regenerate.
+- Brief Gemini per corrected ACTIVE #1 item (does NOT include the old time-persistence trend).
+- Open question for Gemini: is it worth widening `window_size_days` to try to actually resolve
+  temporal persistence, or treat "unresolvable at 45d" as the finding itself?
+
+---
+
+## 2026-07-07 (session 18) — MLD/N² diagnostics + kernel significance testing planned (no code written)
+
+### Summary
+Planning-only session, closed out for `/clear`. No pipeline code touched.
+
+### 1. Mixed layer depth / buoyancy question (from user's interview prep)
+Logged an interviewer question — does stealth warming deepen the mixed layer / weaken boundary-layer
+buoyancy via reduced N² below the mixed layer — to `argo_gemini_actions/AE_gemini_todo.md` (Priority 2)
+as a research item for Gemini. Assessed as plausible-but-indirect; does not change the 3-layer design.
+
+### 2. MLD + Brunt-Väisälä (N²) diagnostics — planned, deferred by user request
+Drafted full design for 3 new functions in `ebus_core/argoebus_thermodynamics.py`:
+- `calculate_buoyancy_frequency(sa, ct, p, lat)` — wraps `gsw.Nsquared`
+- `compute_mld_from_profile(sa, ct, p, ref_depth=10.0, density_threshold=0.03)` — de Boyer Montégut
+  (2004) density-threshold criterion, confirmed with user (Δσθ=0.03 vs 10m ref); well-mixed-profile
+  edge case defaults to NaN (not max-depth) pending confirmation
+- `estimate_mld_n2_from_raw_bins(df, ...)` — mirrors `estimate_ohc_from_raw_bins` binning structure;
+  profile grouping key = `(platform_number, time_days)` since raw ERDDAP schema has no cycle_number
+Wrote full TDD test list (5 tests per function) per user instruction — tests defined, no implementation
+written. Full pipeline wiring into `02_ae_cloud_run.py` (new S3 raw-profile path, new cloud run) explicitly
+scoped OUT for now per user — cost/irreversibility flagged, deferred to separate approval.
+
+### 3. Kernel significance testing (Gibbs vs Matern 5/2 RMSRE) — methodology settled, deferred
+Diagnosed why naive paired tests are wrong here: rolling windows overlap (`step_size_days` <
+`window_size_days` in `05_ae_rmsre_optimization.py`), so per-window RMSRE is autocorrelated, not i.i.d.
+**Recommended test: Diebold-Mariano** (HAC/Newey-West variance, truncation lag = window/step ratio − 1,
+small-sample Harvey-Leybourne-Newbold correction) on the per-window RMSRE differential. Secondary:
+paired Wilcoxon (flagged optimistic, ignores autocorrelation). Effect size: block-bootstrap CI.
+Planned as future standalone script (`06_ae_kernel_significance_test.py` or similar) — not written yet.
+
+### 4. Repository hygiene
+- Updated `argo_gemini_actions/AE_gemini_todo.md` (new research item) and
+  `argo_gemini_actions/AE_gemini_lessons.md` (new reminder section).
+- Updated `argo_claude_actions/AE_claude_lessons.md` — added entry #5: use statistical significance
+  tests (Diebold-Mariano), not raw summary-stat deltas, when judging pipeline variant improvements.
+
+### Next steps (see top of `AE_claude_todo.md`)
+- Implement MLD/N² diagnostic functions + tests (design above) once approved.
+- Implement kernel significance-test script once approved.
+- Gemini to review mixed-layer/buoyancy research question.
+
+---
+
 ## 2026-05-26 (session 17) — Gibbs 3-layer validation complete
 
 ### Summary
