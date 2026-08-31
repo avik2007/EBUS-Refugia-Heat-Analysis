@@ -1,4 +1,4 @@
-# Gemini Recent Actions — ArgoEBUSAnalysis
+# Antigravity Recent Actions — ArgoEBUSAnalysis (formerly Gemini CLI, discontinued 2026-08-30)
 
 ---
 

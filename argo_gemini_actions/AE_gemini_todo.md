@@ -1,4 +1,4 @@
-# Gemini TODO — ArgoEBUSAnalysis
+# Antigravity TODO — ArgoEBUSAnalysis (formerly Gemini CLI, discontinued 2026-08-30)
 
 Last updated: 2026-07-17 (session 19, Claude side)
 
@@ -32,7 +32,7 @@ Last updated: 2026-07-17 (session 19, Claude side)
   - Compare warming rates between Source (150-400m) and Background (500-1000m) layers.
   - Test the hypothesis: Is the California Undercurrent corridor warming faster than the deep ocean?
 
-- [ ] **[For Gemini] Research: Stealth warming -> mixed layer depth / boundary layer buoyancy link**
+- [ ] **[For Antigravity] Research: Stealth warming -> mixed layer depth / boundary layer buoyancy link**
   - Interviewer question (2026-06-30ish): does stealth warming deepen mixed layer, alter boundary layer buoyancy?
   - Not expected to change 3-layer approach. Consider as secondary mechanism / discussion point.
 

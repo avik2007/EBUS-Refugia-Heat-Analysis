@@ -2,6 +2,36 @@
 
 ---
 
+## 2026-08-30 — Qwen handoff dir + thermodynamics test suite + Antigravity migration
+
+### 1. `argo_qwen_actions/` created (multi-agent handoff)
+- New dir mirrors `argo_{claude,gemini}_actions/`: `AE_qwen_{todo,recentactions,lessons}.md`
+  + dated task briefs `YYYY-MM-DD_HHMM_<slug>.md`. Convention documented in `CONVENTIONS.md`
+  (new "## Multi-agent task handoff" section). Commit `0c6b978`.
+
+### 2. `ArgoEBUSCloud/test_thermodynamics.py` — 15 tests, all pass (commit `5f63c7c`)
+- Covers `estimate_ohc_from_raw_bins` (live OHC path): GSW thermodynamics `rho*cp*CT`,
+  bin arithmetic, vertical cut + depth-window drop, synthetic-profile pooling, coverage
+  gate (incl. paired-bin exclusion), trapezoid integration, interior-NaN interpolation,
+  schema/dtypes, NaN-input characterization. Coastline dep stubbed via autouse monkeypatch.
+- Drafted by Qwen via aider (two rounds lost to an aider fence-parse bug → empty file +
+  junk file; recovered from `.aider.chat.history.md`). Claude fixed 5 failing tests
+  (ndarray `.sort_values`, undefined `sort()`, wrong neg-lon expectation, hardcoded
+  rounded anchor, all-out-of-window case) + added the NaN test + verbose comments.
+- Dead-code comment block added to `calculate_thermodynamics` / `compute_ohc_layer` in
+  `argoebus_thermodynamics.py`: dormant, in-situ-t convention, superseded by the CT path.
+
+### 3. Antigravity migration (was todo #-3) — DONE
+- Gemini CLI discontinued 2026-08-30; science-partner role → Google Antigravity.
+  Prose-only, NO renames (Antigravity reads `gemini`-labeled files).
+- Edited: `GEMINI.md` (header note + role prose), `CLAUDE.md:68`, `~/.claude/CLAUDE.md`
+  (dual-graph blurb; `--gemini` flag name kept), auto-memory `feedback_workflow.md`,
+  `argo_gemini_actions/AE_gemini_{todo,lessons,recentactions}.md` titles + the one open
+  `[For Antigravity]` research item. Historical dated files left untouched.
+- Memory `project_antigravity_migration.md` marked complete.
+
+---
+
 ## 2026-07-17 (session 19) — LinkedIn post drafted, RBF-proxy + GibbsKernel time_ls bugs found and fixed
 
 ### Summary

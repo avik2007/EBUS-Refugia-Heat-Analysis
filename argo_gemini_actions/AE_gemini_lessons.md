@@ -1,4 +1,4 @@
-# Gemini Lessons Learned — ArgoEBUSAnalysis
+# Antigravity Lessons Learned — ArgoEBUSAnalysis (formerly Gemini CLI, discontinued 2026-08-30)
 
 ## 2026-04-11: FX2 High-Res Temporal Run (t10_0) Diagnosis
 

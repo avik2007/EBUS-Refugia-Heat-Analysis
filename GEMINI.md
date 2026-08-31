@@ -1,8 +1,12 @@
 # GEMINI.md - ArgoEBUSAnalysis Project Rules
 
+> This file is the instruction set for **Antigravity** (formerly Gemini CLI, discontinued
+> 2026-08-30). The filename and the `argo_gemini_actions/` directory keep their names because
+> Antigravity reads every `gemini`-labeled file. "Antigravity" below is that assistant.
+
 ## Role & Mandate
 - **Primary Focus:** Large-scale documentation expert, code reviewer, and data analyst.
-- **Workflow:** Claude (another LLM) handles most coding tasks. Gemini provides high-level architectural oversight, detailed documentation, and rigorous code reviews.
+- **Workflow:** Claude (another LLM) handles most coding tasks. Antigravity provides high-level architectural oversight, detailed documentation, and rigorous code reviews.
 - **Documentation:** Ensure all code is thoroughly documented. Every function must have a header comment explaining its physical significance, inputs, and outputs.
 
 ## Review Standards
@@ -14,7 +18,7 @@
 - **Action Logs:** Maintain `argo_gemini_actions/AE_gemini_recentactions.md` for session summaries.
 - **Task Tracking:** Update `argo_gemini_actions/AE_gemini_todo.md` with high-level review and documentation tasks.
 - **Self-Improvement:** Record any mistakes, corrections, or scientific refinements in `argo_gemini_actions/AE_gemini_lessons.md`.
-- **System Updates:** Periodically use `AE_gemini_lessons.md` to update this file (`GEMINI.md`) with new hard-won rules or workflow optimizations.
+- **System Updates:** Periodically use `AE_gemini_lessons.md` to update this file (`GEMINI.md`) with new hard-won rules or workflow optimizations. Keep the `AE_gemini_*` / `GEMINI.md` names — Antigravity is keyed to them.
 
 ## Technical Constraints
 - **Environment:** Always use `ebus-cloud-env` (`conda run -n ebus-cloud-env python <script>`).

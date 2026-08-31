@@ -1,3 +1,67 @@
+## 2026-08-30 — [ACTIVE #-2] Add test coverage for the physics/GPR engine (TOP PRIORITY)
+
+**Priority:** Highest. Do before further kernel tuning or any external-facing claim.
+The whole GPR + thermodynamics core has zero unit coverage — only the MLOps wrapper
+(`test_mlops_foundation.py`, ~66 tests) is tested. `test_pipeline.py` is a live-network
+Dask smoke script, not pytest, and is not wired to CI.
+
+**Why now:** history review (session 2026-08-30) found every serious silent bug landed in
+the untested engine. The `GibbsKernel` `time_ls` units bug (056c34f) corrupted a published
+LinkedIn/interview claim (44d→54d→58d depth trend, since retracted). `lat_ls_bounds`/
+`lon_ls_bounds` were silently ignored for weeks (be013be, Gap 1) — engine used a hardcoded
+default. Neither had a test.
+
+**Priority order for new suites:**
+1. **`GibbsKernel` unit tests** (`argoebus_gp_physics.py`). Pure function, trivial to test.
+   - `k(Δt = half-window)` == `exp(-half_window_days / time_ls)` — the exact units bug (fix
+     added `test_gibbs_kernel_time_ls_converts_normalized_dt_to_days`; extend it).
+   - Gibbs vs Matérn path parity: near-equal `K` when lengthscales set equal; `np.isfinite(K).all()`.
+   - `get_params` / `clone_with_theta` round-trip preserves every constructor arg (incl. `window_size_days`).
+   - PSD check: `K` symmetric, eigenvalues ≥ -1e-8 on a small random `X`.
+2. **`argoebus_thermodynamics.py` golden values.** Highest blast radius, currently unguarded.
+   - Hand-computed T/S/P profile → known OHC in J/m² (assert to tolerance).
+   - Unit check (`units == 'J/m^2'`), monotonicity (warmer water → more OHC).
+   - Depth clipping: `depth_min`/`depth_max` actually respected (the "CRITICAL: Respecting
+     chosen depth" comments in Script 02 mark the anxiety).
+3. **config → dispatch contract tests** (`runner.py`). "Is every config field actually
+   threaded to the engine?" — the Gap 1 class of bug. Bounds present → correct kwarg;
+   null bounds → key absent (be013be already added a version of this — generalise it).
+4. **ERDDAP URL-builder unit test** (`02_ae_cloud_run.py`). Offline, no network.
+   - Assert `>`/`<` encoded as `%3E`/`%3C` (fsspec treats bare ones as glob).
+   - Assert host is `erddap.ifremer.fr` (www→erddap redirect not followed with comparison ops).
+5. **Repo-layout test.** Resolved output dir `== repo_root/AEResults` (lesson #2, commit 74d20c2
+   — silent writes into `ArgoEBUSCloud/AEResults/`).
+6. **Signature-drift test.** Each pipeline entry fn matches `(region, lat_step, lon_step,
+   time_step, depth_range)` (lesson #3).
+
+**Also:** wire `test_pipeline.py` (or a trimmed offline version) into the same pytest run,
+or delete it and replace with a mocked-ERDDAP integration test.
+
+Last updated: 2026-08-30
+
+---
+
+## 2026-07-17 — [ACTIVE #-1] Finish Diebold-Mariano significance test (HLN correction missing)
+
+**Priority:** Resume first next session — pending correctness check before the
+significance claim is used anywhere external-facing (LinkedIn, Gemini briefing, interview prep).
+
+Full findings: `argo_claude_actions/dm_test_review_2026-07-17.md`.
+
+`compare_kernels.py` (Gemini, this session) runs clean and its numbers check out, but it's
+missing half of the methodology agreed in session 18: no small-sample Harvey-Leybourne-Newbold
+(HLN) correction (p-values use standard normal instead of t(N-1), likely overstating
+significance at N=34), and `lag=4` is hardcoded rather than derived from
+`window_size_days/step_size_days − 1` (=3.5 currently).
+
+Next step: add HLN correction + derive lag from config, re-run, and check whether the
+"Gibbs statistically superior on all 3 layers" verdict survives — **Source** layer is the
+one most at risk (closest p-value to 0.05, bootstrap CI already nearly crossing zero).
+
+Last updated: 2026-07-17
+
+---
+
 ## 2026-07-17 — [ACTIVE #0] Resume LinkedIn post on Gibbs kernel results
 
 **Status:** Paused mid-session 19, pending the time_ls investigation (now resolved, see #1 below).
