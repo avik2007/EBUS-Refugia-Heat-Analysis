@@ -14,9 +14,7 @@ After finishing a brief:
 
 ## Open
 
-- **2026-08-30_2236_thermo-tests.md** — write `ArgoEBUSCloud/test_thermodynamics.py`
-  covering `estimate_ohc_from_raw_bins` (Tier-1 numeric + Tier-2 shape/smoke).
-  Verify: `conda run -n ebus-cloud-env python -m pytest ArgoEBUSCloud/test_thermodynamics.py -v`.
+_(none)_
 
 ## Blocked
 

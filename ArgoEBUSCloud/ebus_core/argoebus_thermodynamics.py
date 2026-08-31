@@ -17,6 +17,32 @@ import gsw
 from datetime import datetime   
 
 
+# =============================================================================
+# DORMANT CODE — read before reusing.
+#
+# `calculate_thermodynamics` + `compute_ohc_layer` below are the ORIGINAL
+# xarray/apply_ufunc approach to Ocean Heat Content: compute a per-point energy
+# density (J/m^3) for one ocean column, then integrate it over depth to get
+# OHC (J/m^2). The lineage is the root script `ArgoHeatContentDataCollater.py`,
+# which this module was split out from.
+#
+# Physical convention here: energy density = rho * cp_t_exact * t, i.e. it uses
+# IN-SITU temperature `t` (in degC), giving heat content relative to 0 degC.
+# In-situ T is paired with in-situ cp (`gsw.cp_t_exact`), so this pair is
+# internally consistent.
+#
+# STATUS: dormant. No pipeline stage imports `calculate_thermodynamics` or
+# `compute_ohc_layer`. The LIVE OHC path is `estimate_ohc_from_raw_bins` further
+# down this file (used by 01_ae_cloud_ingestion.py and 02_ae_cloud_run.py).
+# That function uses CONSERVATIVE temperature `CT` instead of in-situ `t`
+# (rho * cp_t_exact * CT). The two conventions therefore diverge by ~0.1-1 degC
+# of temperature (~0.1-1% of OHC in CCS waters). This divergence is left
+# unreconciled on purpose, pending a science-partner decision on the correct
+# TEOS-10 convention.
+#
+# Not deleted: this remains the candidate implementation for a future
+# gridded-xarray OHC path.
+# =============================================================================
 def calculate_thermodynamics(sp, t, p, lon, lat):
     """
     Wrapper for GSW functions to be used with apply_ufunc.
@@ -41,8 +67,10 @@ def calculate_thermodynamics(sp, t, p, lon, lat):
     return rho * cp * t
 
 
-# once we have the ability to calculate thermodynamics for one ocean column, we can incorporate it into 
+# once we have the ability to calculate thermodynamics for one ocean column, we can incorporate it into
 # a function that makes xarray inputs/outputs
+# DORMANT: see the block above `calculate_thermodynamics`. Nothing in the pipeline
+# calls this; the live OHC path is `estimate_ohc_from_raw_bins`.
 def compute_ohc_layer(ds_input, layer_label):
     # Ensure inputs are present
     # Salinity sensors can be fouled up in Argo sensors, so we have to account for this possibility
