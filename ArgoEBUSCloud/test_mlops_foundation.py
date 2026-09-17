@@ -914,6 +914,76 @@ def test_run_analysis_omits_gibbs_params_when_not_gibbs(tmp_path, monkeypatch):
     assert "gibbs_params" not in captured_kwargs
 
 
+# ---------------------------------------------------------------------------
+# ERDDAP URL builder (02_ae_cloud_run.py) — offline, mocked substitute for the
+# live-network-only test_pipeline.py smoke script (kept as-is, not pytest).
+# ---------------------------------------------------------------------------
+
+
+def test_erddap_url_uses_correct_host_and_encoding(monkeypatch):
+    """run_cloud_pipeline must build the ERDDAP query URL with the
+    erddap.ifremer.fr host and %3E/%3C-encoded comparison operators (bare >/<
+    break the www->erddap redirect and are treated as glob characters by
+    fsspec). Runs fully offline: Coiled/Dask cluster setup is mocked out, and
+    dd.read_csv is intercepted to capture the URL before any real network or
+    cluster work happens."""
+    import importlib.util
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    script_path = _Path(__file__).resolve().parent / "02_ae_cloud_run.py"
+    spec = importlib.util.spec_from_file_location("script_02_url_test", script_path)
+    mod = importlib.util.module_from_spec(spec)
+    _sys.modules["script_02_url_test"] = mod
+    spec.loader.exec_module(mod)
+
+    class _FakeCluster:
+        def __init__(self, **kwargs):
+            pass
+
+        def shutdown(self):
+            pass
+
+    class _FakeClient:
+        def __init__(self, cluster):
+            self.dashboard_link = "http://fake-dashboard"
+
+        def run(self, fn):
+            pass
+
+        def close(self):
+            pass
+
+    class _StopAfterUrlCapture(Exception):
+        pass
+
+    captured = {}
+
+    def fake_read_csv(url, **kwargs):
+        captured["url"] = url
+        raise _StopAfterUrlCapture()
+
+    monkeypatch.setattr(mod.coiled, "Cluster", lambda **kwargs: _FakeCluster(**kwargs))
+    monkeypatch.setattr(mod, "Client", _FakeClient)
+    monkeypatch.setattr(mod.dd, "read_csv", fake_read_csv)
+
+    with pytest.raises(_StopAfterUrlCapture):
+        mod.run_cloud_pipeline(
+            region="californiav2", lat_step=0.5, lon_step=0.5,
+            time_step=10.0, depth_range=(150, 400), n_workers=2,
+        )
+
+    url = captured["url"]
+    assert url.startswith("https://erddap.ifremer.fr/erddap/tabledap/ArgoFloats.csv?")
+    assert ">" not in url and "<" not in url
+    assert "latitude%3E=30.0" in url
+    assert "latitude%3C=45.0" in url
+    assert "longitude%3E=-130.0" in url
+    assert "longitude%3C=-115.0" in url
+    assert "time%3E=2015-01-01T00:00:00Z" in url
+    assert "time%3C=2015-12-31T23:59:59Z" in url
+
+
 import subprocess as _subprocess
 
 
