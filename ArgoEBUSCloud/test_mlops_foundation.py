@@ -768,6 +768,152 @@ def test_run_ingestion_dispatches(tmp_path, monkeypatch):
     assert (tmp_path / "registry.jsonl").exists()
 
 
+# ---------------------------------------------------------------------------
+# dispatch_kwargs contract completeness: full unconditional key set +
+# gibbs_params dict construction (extends the spot-checks above).
+# ---------------------------------------------------------------------------
+
+
+def test_run_analysis_dispatch_kwargs_full_unconditional_set(tmp_path, monkeypatch):
+    """Every GPRBlock field that run_analysis always threads through must reach
+    dispatch, not just the region/depth_range/kernel_type/window_size_days
+    already covered above."""
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    captured_kwargs = {}
+
+    def fake_dispatch(**kw):
+        captured_kwargs.update(kw)
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"audit_{run_id}.csv").write_text("dummy,csv\n")
+        return {"audit_csv": str(out_dir / f"audit_{run_id}.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    assert captured_kwargs["mode"] == "3D"
+    assert captured_kwargs["step_size_days"] == 10
+    assert captured_kwargs["min_bins"] == 10
+    assert captured_kwargs["noise_val"] == 0.1
+    assert captured_kwargs["time_ls_bounds_days"] == (15.0, 45.0)
+    assert captured_kwargs["run_suffix"] == "_3dmatern_w45"
+
+
+def test_run_ingestion_dispatch_kwargs_full_unconditional_set(tmp_path, monkeypatch):
+    """Every field run_ingestion always threads through must reach dispatch,
+    not just region/depth_range already covered by test_run_ingestion_dispatches."""
+    cfg = IngestionConfig(
+        schema_version=1, config_kind="ingestion",
+        region="californiav2",
+        date_start=dt.date(2015, 1, 1), date_end=dt.date(2015, 12, 31),
+        lat_step=0.5, lon_step=0.5, time_step=10.0, depth_range=(0, 100),
+        cloud={"n_workers": 7, "worker_region": "eu-west-1"},
+        s3={"bucket": "custom-test-bucket"},
+    )
+
+    captured = {}
+
+    def fake_ingest(**kwargs):
+        captured.update(kwargs)
+        return {"s3_path": "s3://bucket/key.parquet", "etag": "abc", "size_bytes": 100}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_ingestion", fake_ingest)
+    monkeypatch.setattr("ebus_core.runner.INGESTION_AELOGS_DIR", tmp_path / "aelogs")
+
+    run_ingestion(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    assert captured["date_start"] == dt.date(2015, 1, 1)
+    assert captured["date_end"] == dt.date(2015, 12, 31)
+    assert captured["n_workers"] == 7
+    assert captured["worker_region"] == "eu-west-1"
+    assert captured["s3_bucket"] == "custom-test-bucket"
+
+
+def test_run_analysis_builds_gibbs_params_dict(tmp_path, monkeypatch):
+    """kernel_type='gibbs' must forward every KernelGibbsBlock field into
+    dispatch_kwargs['gibbs_params'], not just exercise it indirectly via
+    analyze_rolling_correlations."""
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    kwargs["gpr"]["kernel_type"] = "gibbs"
+    kwargs["gpr"]["kernel_gibbs"] = {
+        "l_min_km": 120.0,
+        "l_max_km": 380.0,
+        "d_transition_init_km": 250.0,
+        "d_transition_bounds_km": (60.0, 650.0),
+        "k_steepness_init": 0.02,
+        "k_steepness_bounds": (2.0e-4, 0.5),
+        "anisotropy_lat_lon_ratio": 3.0,
+        "anisotropy_lat_lon_ratio_bounds": (1.0, 3.5),
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    captured_kwargs = {}
+
+    def fake_dispatch(**kw):
+        captured_kwargs.update(kw)
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"audit_{run_id}.csv").write_text("dummy,csv\n")
+        return {"audit_csv": str(out_dir / f"audit_{run_id}.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    assert captured_kwargs["gibbs_params"] == {
+        "l_min_km": 120.0,
+        "l_max_km": 380.0,
+        "d_transition_init_km": 250.0,
+        "d_transition_bounds_km": (60.0, 650.0),
+        "k_steepness_init": 0.02,
+        "k_steepness_bounds": (2.0e-4, 0.5),
+        "anisotropy_lat_lon_ratio": 3.0,
+        "anisotropy_lat_lon_ratio_bounds": (1.0, 3.5),
+    }
+
+
+def test_run_analysis_omits_gibbs_params_when_not_gibbs(tmp_path, monkeypatch):
+    """kernel_type='matern0.5' (the default) must never produce a gibbs_params key."""
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+
+    captured_kwargs = {}
+
+    def fake_dispatch(**kw):
+        captured_kwargs.update(kw)
+        run_id = derive_run_id(cfg)
+        out_dir = tmp_path / "aelogs" / run_id
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"audit_{run_id}.csv").write_text("dummy,csv\n")
+        return {"audit_csv": str(out_dir / f"audit_{run_id}.csv")}
+
+    monkeypatch.setattr("ebus_core.runner._call_run_diagnostic_inspection", fake_dispatch)
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+
+    assert "gibbs_params" not in captured_kwargs
+
+
 import subprocess as _subprocess
 
 
