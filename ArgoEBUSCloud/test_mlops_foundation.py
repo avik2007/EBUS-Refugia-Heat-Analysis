@@ -1028,6 +1028,46 @@ def test_erddap_url_uses_correct_host_and_encoding(monkeypatch):
     assert "time%3C=2015-12-31T23:59:59Z" in url
 
 
+# ---------------------------------------------------------------------------
+# Pipeline entry-point signature-drift guard (CLAUDE.md "Hard-Won Rules":
+# every analysis/diagnostic function must be importable with
+# (region, lat_step, lon_step, time_step, depth_range) as the first five
+# params, matching run_diagnostic_inspection()).
+# ---------------------------------------------------------------------------
+
+
+def test_pipeline_entrypoints_share_first_five_param_contract():
+    """run_diagnostic_inspection (05) and run_cloud_pipeline (02) must expose
+    the same first five param names, in order. Defaults are intentionally
+    allowed to differ (e.g. time_step 10.0 vs 30.0) — only names/order are
+    pinned. 07_ae_deeper_layers.py is deliberately not imported here: it
+    defines no entry point of its own (only re-imports 05's function) and has
+    sys.argv-gated module-level execution that would fire on import."""
+    import importlib.util
+    import inspect
+    import sys as _sys
+    from pathlib import Path as _Path
+
+    expected_first_five = ["region", "lat_step", "lon_step", "time_step", "depth_range"]
+
+    def _load(script_name, mod_name):
+        script_path = _Path(__file__).resolve().parent / script_name
+        spec = importlib.util.spec_from_file_location(mod_name, script_path)
+        mod = importlib.util.module_from_spec(spec)
+        _sys.modules[mod_name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    script05 = _load("05_ae_update_tomatern0.5.py", "script_05_sig_test")
+    script02 = _load("02_ae_cloud_run.py", "script_02_sig_test")
+
+    params_05 = list(inspect.signature(script05.run_diagnostic_inspection).parameters)
+    params_02 = list(inspect.signature(script02.run_cloud_pipeline).parameters)
+
+    assert params_05[:5] == expected_first_five
+    assert params_02[:5] == expected_first_five
+
+
 import subprocess as _subprocess
 
 
