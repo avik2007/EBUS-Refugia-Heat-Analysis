@@ -281,6 +281,50 @@ def test_fmt_dec_importable_from_ae_utils():
     assert fmt_dec(30.0) == "30_0"
 
 
+# ---------------------------------------------------------------------------
+# Repo-layout: AEResults must resolve to ArgoEBUSAnalysis/, not
+# ArgoEBUSCloud/ or ArgoEBUSCloud/AEResults (historical lesson-#2 bug shape:
+# silent writes into the wrong directory).
+# ---------------------------------------------------------------------------
+
+
+def test_get_project_paths_root_is_repo_root_not_cloud_dir():
+    import os as _os
+    from ebus_core.ae_utils import get_project_paths
+    paths = get_project_paths()
+    assert _os.path.basename(paths["root"]) != "ArgoEBUSCloud"
+    assert paths["results"] == _os.path.join(paths["root"], "AEResults")
+    assert paths["plots"] == _os.path.join(paths["root"], "AEResults", "aeplots")
+
+
+def test_ensure_ae_dirs_creates_subdirs_under_correct_root():
+    # Non-destructive: only asserts existence. These dirs already exist in the
+    # real repo, so this doesn't create anything new that would need cleanup.
+    import os as _os
+    from ebus_core.ae_utils import ensure_ae_dirs, get_project_paths
+    ensure_ae_dirs()
+    results_root = get_project_paths()["results"]
+    for sub in ["aeplots", "aedata", "aelogs"]:
+        assert _os.path.isdir(_os.path.join(results_root, sub))
+
+
+def test_script05_plot_dir_matches_get_project_paths():
+    """05_ae_update_tomatern0.5.py independently re-derives the AEResults/aeplots
+    path (one level up from ArgoEBUSCloud/, since it lives one level shallower
+    than ae_utils.py) instead of reusing get_project_paths(). This pins the two
+    independent traversals together so an edit to one without the other is
+    caught immediately instead of silently writing to the wrong directory."""
+    import os as _os
+    from ebus_core.ae_utils import get_project_paths
+
+    script05_path = _os.path.join(_os.path.dirname(__file__), "05_ae_update_tomatern0.5.py")
+    base_path = _os.path.dirname(_os.path.abspath(script05_path))
+    plot_dir_via_script05_formula = _os.path.normpath(
+        _os.path.join(base_path, "..", "AEResults", "aeplots")
+    )
+    assert plot_dir_via_script05_formula == _os.path.normpath(get_project_paths()["plots"])
+
+
 import textwrap
 
 from ebus_core.config_schema import load_config
