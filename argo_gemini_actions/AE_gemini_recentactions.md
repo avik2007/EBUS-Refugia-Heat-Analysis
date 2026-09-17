@@ -2,6 +2,31 @@
 
 ---
 
+## 2026-09-16 — Science Review: Diebold-Mariano HLN Audit & Stealth Warming / MLD Feedback Analysis
+
+**Action:** Conducted rigorous science review of the Diebold–Mariano statistical audit with Harvey–Leybourne–Newbold (HLN 1997) correction, explored the physical coupling between Ekman coastal upwelling and thermocline/pycnocline warming (MLD deepening and $N^2$ erosion), documented findings in `2026-09-16_diebold_mariano_and_stealth_warming_mld_review.md`, authored a comprehensive methodology and proof reference in `diebold_mariano_audit_reference.md`, and formulated non-trivial Argo float implementation tasks for MLD/$N^2$ diagnostics in `AE_gemini_todo.md`.
+
+### 1. Statistical Audit Review (Diebold-Mariano with HLN Finite-Sample Correction)
+* Verified statistical significance of Gibbs non-stationary kernel over stationary Matérn-0.5:
+  * **Skin Layer (0–100m):** $DM^* = 2.864, p = 3.55 \times 10^{-3} < 0.01$ (relative median RMSRE improvement 12.86%).
+  * **Source Layer (150–400m):** $DM^* = 1.840, p = 0.0374 < 0.05$ (relative median RMSRE improvement 13.53%).
+  * **Background Layer (500–1000m):** $DM^* = 4.546, p = 3.65 \times 10^{-5} \ll 0.001$ (relative median RMSRE improvement 18.87%).
+* Confirmed that uncertainty calibration collapse is resolved: Gibbs maintains $\text{Std}(Z) \approx 0.97\text{--}1.00$ ($\sigma \sim 0.08\text{--}0.10$) across all layers.
+
+### 2. Hypothesis Decomposition: Stealth Warming vs. MLD & Pycnocline Stratification
+* Analyzed the dual physical pathways of subsurface warming:
+  1. **Direct Ekman Advection:** Equatorward winds force surface offshore divergence, drawing warm CUC Source water directly onto the shelf, bypassing atmospheric air-sea heat exchange.
+  2. **Entrainment & MLD Deepening:** Upper pycnocline warming reduces $\partial \rho / \partial z$, decreasing buoyancy frequency $N^2$ and lowering the Richardson number $Ri$. Mechanical wind mixing ($u_*^3$) penetrates deeper, deepening the mixed layer and storing larger column heat over extended timescales.
+* Preserved comprehensive analysis in `argo_gemini_actions/2026-09-16_diebold_mariano_and_stealth_warming_mld_review.md`.
+
+### 3. Methodology & Proof Reference
+* Authored `diebold_mariano_audit_reference.md` — comprehensive DM/HLN methodology and proof guide (ML engineer + climate scientist audience).
+
+### 4. Task Planning: Non-Trivial Argo Float MLD & $N^2$ Diagnostics
+* Detailed key challenges in `AE_gemini_todo.md`: missing near-surface data (10 dbar reference depth needed), TEOS-10 ($\Theta, S_A$) potential density calculation, salinity compensation/barrier layers, and discrete differentiation sensor noise requiring adiabatic sorting/smoothing for $N^2$.
+
+---
+
 ## 2026-08-30 — HLN Small-Sample DM Correction & Vertical Delta Analysis Script
 
 **Action:** Onboarded Antigravity agent, completed Harvey–Leybourne–Newbold (HLN 1997) finite-sample correction in `compare_kernels.py`, implemented `vertical_delta_analysis.py`, and handed off to Claude for review and execution.

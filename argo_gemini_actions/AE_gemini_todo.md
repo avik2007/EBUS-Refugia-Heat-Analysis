@@ -33,9 +33,15 @@ Last updated: 2026-07-17 (session 19, Claude side)
   - Evaluates meridional anisotropy, coastal transition $d_0$, and calibration metrics across 2015.
   - Handed off to Claude in `argo_claude_actions/AE_claude_todo.md` for review and execution.
 
-- [ ] **[For Antigravity] Research: Stealth warming -> mixed layer depth / boundary layer buoyancy link**
-  - Interviewer question (2026-06-30ish): does stealth warming deepen mixed layer, alter boundary layer buoyancy?
-  - Not expected to change 3-layer approach. Consider as secondary mechanism / discussion point.
+- [ ] **[For Antigravity] Research & Diagnostic: Stealth Warming -> MLD Deepening & Pycnocline Stratification ($N^2$) Link**
+  - **Physical Mechanism:** Investigate whether subsurface heat accumulation in the Source Layer ($150\text{--}400\text{m}$) weakens pycnocline stratification ($N^2$), lowering the Richardson barrier to wind/wave entrainment and deepening the Mixed Layer Depth (MLD).
+  - **Non-Trivial Argo Float Implementation Challenges:**
+    1. *Irregular Sampling & Surface Truncation:* Argo CTD pumps switch off at $\sim 3\text{--}5\text{ dbar}$ to avoid surface contamination, leaving no true surface ($z=0$) measurement. Must establish a standardized near-surface reference depth (e.g. $10\text{ dbar}$, de Boyer Montégut et al. 2004) to avoid transient diurnal warm layers.
+    2. *Thermodynamic State via TEOS-10 (`gsw`):* Must convert in-situ $T, S_P, P$ to Conservative Temperature $\Theta$ and Absolute Salinity $S_A$ before deriving potential density anomaly $\sigma_\theta$.
+    3. *Salinity Compensation & Inversion Robustness:* Coastal upwelling regions exhibit barrier layers and salinity compensation (cold fresh water overlying warm salty water). Density-based threshold criteria ($\Delta \sigma_\theta = 0.03\text{ kg/m}^3$ from $10\text{ dbar}$ reference) must be used instead of simple temperature drops, paired with fine vertical linear interpolation between observation levels.
+    4. *Sensor Noise & Spurious Gravitational Instability in $N^2$:* Discrete vertical differentiation $\frac{\partial \rho}{\partial z}$ on raw CTD data creates artificial negative density steps and spurious negative $N^2$. Requires adiabatic profile leveling/sorting or vertical smoothing (e.g., 5–10m window filter) or TEOS-10 `gsw.Nsquared` formulation.
+    5. *Pycnocline Core Metrics:* Extract $N^2_{\text{max}}$ (pycnocline strength) and $z(N^2_{\text{max}})$ (pycnocline depth) for each profile to directly test correlation against Source Layer OHC anomalies.
+  - **Target Integration:** Formulate and prototype diagnostic functions in `ebus_core/argoebus_thermodynamics.py`.
 
 ---
 
