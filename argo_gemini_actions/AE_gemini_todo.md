@@ -28,9 +28,10 @@ Last updated: 2026-07-17 (session 19, Claude side)
   - Confirmed meridional anisotropy in Undercurrent corridor.
   - Flagged Blob-related stationarity violations.
 
-- [ ] **Vertical Delta Analysis Script**
-  - Compare warming rates between Source (150-400m) and Background (500-1000m) layers.
-  - Test the hypothesis: Is the California Undercurrent corridor warming faster than the deep ocean?
+- [x] **Vertical Delta Analysis Script (`vertical_delta_analysis.py`)** — IMPLEMENTED (session 2026-08-30)
+  - Created `vertical_delta_analysis.py` for cross-layer vertical sandwich audit (Source 150–400m vs. Background 500–1000m).
+  - Evaluates meridional anisotropy, coastal transition $d_0$, and calibration metrics across 2015.
+  - Handed off to Claude in `argo_claude_actions/AE_claude_todo.md` for review and execution.
 
 - [ ] **[For Antigravity] Research: Stealth warming -> mixed layer depth / boundary layer buoyancy link**
   - Interviewer question (2026-06-30ish): does stealth warming deepen mixed layer, alter boundary layer buoyancy?

@@ -1,3 +1,12 @@
+## 2026-08-30 — [HANDOFF FROM ANTIGRAVITY] Review & Run HLN DM Test + Vertical Delta Analysis
+
+**Priority:** High (Review & Execution).
+Antigravity (science partner) completed the statistical hardening and Vertical Delta script:
+1. **`compare_kernels.py`:** Added Harvey–Leybourne–Newbold (HLN 1997) small-sample modification (`dm_stat_hln`), dynamic lag derivation from rolling window overlap ($h = \lfloor \frac{W - 1}{S} \rfloor = 4$), and Student's $t(N-1)$ p-values. Please review the implementation and run `conda run -n ebus-cloud-env python compare_kernels.py` to verify output across Skin, Source, and Background layers.
+2. **`vertical_delta_analysis.py`:** Created end-to-end Vertical Sandwich Delta analysis script comparing Source (150–400m) vs. Background (500–1000m) dynamics (anisotropy ratio, coastal transition $d_0$, and calibration metrics). Please review the script and run `conda run -n ebus-cloud-env python vertical_delta_analysis.py` to generate the synthesis figures in `AEResults/aeplots/vertical_delta/` and metrics CSV in `AEResults/aelogs/`.
+
+---
+
 ## 2026-08-30 — [ACTIVE #-2] Add test coverage for the physics/GPR engine (TOP PRIORITY)
 
 **Priority:** Highest. Do before further kernel tuning or any external-facing claim.

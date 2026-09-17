@@ -57,7 +57,7 @@ class QCPolicyBlock(BaseModel):
 
     @field_validator("argo_qc_flags_accepted")
     @classmethod
-    def _flags_in_argo_domain(cls, v):
+    def _flags_in_argo_domain(cls, v: list[int]) -> list[int]:
         # Argo quality control flag spec (ADMT): valid values are 1–5, 8, 9
         allowed = {1, 2, 3, 4, 5, 8, 9}
         bad = [f for f in v if f not in allowed]

@@ -7,6 +7,8 @@
 # 4. produce_kriging_map
 
 import os
+import datetime as dt
+from typing import Any, Callable
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -89,19 +91,19 @@ class GibbsKernel(Kernel):
 
     def __init__(
         self,
-        l_min_km=100.0,
-        l_max_km=400.0,
-        d_transition_init_km=300.0,
-        d_transition_bounds_km=(50.0, 700.0),
-        k_steepness_init=0.01,
-        k_steepness_bounds=(1.0e-4, 1.0),
-        anisotropy_lat_lon_ratio=2.0,
-        anisotropy_lat_lon_ratio_bounds=(1.0, 4.0),
-        time_ls_init_days=30.0,
-        time_ls_bounds_days=(15.0, 45.0),
-        window_size_days=90.0,
-        mode='3D',
-    ):
+        l_min_km: float = 100.0,
+        l_max_km: float = 400.0,
+        d_transition_init_km: float = 300.0,
+        d_transition_bounds_km: tuple[float, float] = (50.0, 700.0),
+        k_steepness_init: float = 0.01,
+        k_steepness_bounds: tuple[float, float] = (1.0e-4, 1.0),
+        anisotropy_lat_lon_ratio: float = 2.0,
+        anisotropy_lat_lon_ratio_bounds: tuple[float, float] = (1.0, 4.0),
+        time_ls_init_days: float = 30.0,
+        time_ls_bounds_days: tuple[float, float] = (15.0, 45.0),
+        window_size_days: float = 90.0,
+        mode: str = '3D',
+    ) -> None:
         # Store all constructor args verbatim — sklearn requires this for
         # get_params() / clone_with_theta() to work correctly.
         self.l_min_km = l_min_km
@@ -125,7 +127,7 @@ class GibbsKernel(Kernel):
         self._time_ls = float(time_ls_init_days)
 
     # -------- sigmoid lengthscale --------
-    def _sigmoid_lengthscale(self, d_km):
+    def _sigmoid_lengthscale(self, d_km: np.ndarray) -> np.ndarray:
         # Sigmoid producing the LAT lengthscale at each point given dist_to_coast.
         # l(d) = l_min + (l_max - l_min) / (1 + exp(-k * (d - d_0))).
         # Vectorised: d_km shape (n,) -> output shape (n,).
@@ -143,14 +145,14 @@ class GibbsKernel(Kernel):
     # Override theta/bounds/clone directly to conditionally exclude time_ls in 2D.
 
     @property
-    def theta(self):
+    def theta(self) -> np.ndarray:
         # Log-space vector consumed by the optimiser.
         if self.mode == '3D':
             return np.log(np.array([self._d0, self._k, self._time_ls, self._anisotropy_ratio]))
         return np.log(np.array([self._d0, self._k, self._anisotropy_ratio]))
 
     @theta.setter
-    def theta(self, theta):
+    def theta(self, theta: np.ndarray) -> None:
         # Sklearn pushes new log-space theta during optimisation.
         # Update all live linear-space mirrors used inside __call__.
         vals = np.exp(theta)
@@ -163,7 +165,7 @@ class GibbsKernel(Kernel):
             self._anisotropy_ratio = float(vals[2])
 
     @property
-    def bounds(self):
+    def bounds(self) -> np.ndarray:
         # Log-space (lower, upper) per learnable parameter, same order as theta.
         rows = [
             (np.log(self.d_transition_bounds_km[0]),
@@ -182,7 +184,7 @@ class GibbsKernel(Kernel):
         ))
         return np.array(rows)
 
-    def clone_with_theta(self, theta):
+    def clone_with_theta(self, theta: np.ndarray) -> "GibbsKernel":
         # Returns a NEW GibbsKernel with supplied theta and all constructor args
         # preserved. Sklearn calls this during optimisation restarts.
         cloned = GibbsKernel(
@@ -202,7 +204,7 @@ class GibbsKernel(Kernel):
         cloned.theta = theta
         return cloned
 
-    def get_params(self, deep=True):
+    def get_params(self, deep: bool = True) -> dict[str, Any]:
         # Required for sklearn clone() and pipeline introspection.
         return {
             "l_min_km": self.l_min_km,
@@ -220,12 +222,12 @@ class GibbsKernel(Kernel):
         }
 
     @property
-    def n_dims(self):
+    def n_dims(self) -> int:
         # Number of LEARNABLE hyperparameters (not spatial feature dims).
         return 4 if self.mode == '3D' else 3
 
     @property
-    def hyperparameters(self):
+    def hyperparameters(self) -> list[Hyperparameter]:
         # Sklearn introspection; one Hyperparameter per theta entry, same order.
         hps = [
             Hyperparameter("d_transition_init_km", "numeric",
@@ -243,7 +245,9 @@ class GibbsKernel(Kernel):
         ))
         return hps
 
-    def __call__(self, X, Y=None, eval_gradient=False):
+    def __call__(
+        self, X: np.ndarray, Y: np.ndarray | None = None, eval_gradient: bool = False
+    ) -> np.ndarray:
         # Compute K(X, Y). If Y is None, computes K(X, X). Returns shape (n_X, n_Y).
         # eval_gradient=True is unsupported — use _gibbs_optimizer (finite-diff) instead
         # of sklearn's default optimizer to avoid this branch being reached.
@@ -315,15 +319,15 @@ class GibbsKernel(Kernel):
 
         return K
 
-    def diag(self, X):
+    def diag(self, X: np.ndarray) -> np.ndarray:
         # k(x, x) = 1 for Gibbs spatial (prefactor=1, exponent=0) and
         # Matern(nu=0.5) at zero lag. ConstantKernel wraps this externally.
         return np.ones(X.shape[0])
 
-    def is_stationary(self):
+    def is_stationary(self) -> bool:
         return False
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"GibbsKernel(l_min_km={self.l_min_km}, l_max_km={self.l_max_km}, "
             f"d_0={self._d0:.1f}, k={self._k:.4f}, "
@@ -332,7 +336,9 @@ class GibbsKernel(Kernel):
         )
 
 
-def _gibbs_optimizer(obj_func, initial_theta, bounds):
+def _gibbs_optimizer(
+    obj_func: Callable[..., Any], initial_theta: np.ndarray, bounds: np.ndarray
+) -> tuple[np.ndarray, float]:
     # Custom optimizer for GibbsKernel: scipy L-BFGS-B with finite-difference gradient.
     # sklearn's default 'fmin_l_bfgs_b' calls kernel(X, eval_gradient=True) which
     # GibbsKernel does not support. This wrapper uses jac='2-point' (numerical gradient)
@@ -349,7 +355,7 @@ def _gibbs_optimizer(obj_func, initial_theta, bounds):
     # OUTPUTS: (theta_opt, neg_lml_opt)
     from scipy.optimize import minimize
 
-    def value_only(theta):
+    def value_only(theta: np.ndarray) -> float:
         # Force scalar return regardless of sklearn version.
         result = obj_func(theta, eval_gradient=False)
         return result if np.isscalar(result) else result[0]
@@ -362,7 +368,9 @@ def _gibbs_optimizer(obj_func, initial_theta, bounds):
     return res.x, res.fun
 
 
-def _lonlat_to_local_km(lat_deg, lon_deg, lat_center_deg, lon_center_deg):
+def _lonlat_to_local_km(
+    lat_deg: np.ndarray, lon_deg: np.ndarray, lat_center_deg: float, lon_center_deg: float
+) -> tuple[np.ndarray, np.ndarray]:
     # Project lat/lon (degrees) to local Cartesian km via equirectangular approximation
     # centred at (lat_center, lon_center). Vectorised: inputs may be arrays.
     #
@@ -382,10 +390,18 @@ The following function provides the option for the global validation of a Gaussi
 Use this if you are happy with coming up with one set of correlation lengths (one for lat, one for lon, optionally one for time)
 for your system. 
 """
-def generalized_cross_validation(df, feature_cols=['lat', 'lon'], target_col='temp', 
-                                 method='KFold', k_fold_data_percent=10,
-                                 auto_tune=True, tune_subsample_frac=0.05, tune_iterations=5,
-                                 length_scale_val=1.0, noise_val=0.1):
+def generalized_cross_validation(
+    df: pd.DataFrame,
+    feature_cols: list[str] = ['lat', 'lon'],
+    target_col: str = 'temp',
+    method: str = 'KFold',
+    k_fold_data_percent: float = 10,
+    auto_tune: bool = True,
+    tune_subsample_frac: float = 0.05,
+    tune_iterations: int = 5,
+    length_scale_val: float | list[float] = 1.0,
+    noise_val: float = 0.1,
+) -> dict[str, Any]:
     """
     Global GP Validation (Smart Hybrid).
     Splits the data into Train/Test sets and fits ONE Gaussian Process to the entire training set.
@@ -651,12 +667,22 @@ This is almost certaintly the best thing to use, but it is computationally incre
 time varying correlation distances. Save this for cloud computing.
 """
 
-def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp', 
-                           method='LOFO', k_fold_data_percent=10,
-                           radius_km=300, min_neighbors=10, max_samples=1000,
-                           auto_tune=True, tune_subsample_frac=0.05, tune_iterations=5,
-                           length_scale_val=1.0, noise_val=0.1,
-                           optimization_mode='group'): 
+def validate_moving_window(
+    df: pd.DataFrame,
+    feature_cols: list[str] = ['lat', 'lon'],
+    target_col: str = 'temp',
+    method: str = 'LOFO',
+    k_fold_data_percent: float = 10,
+    radius_km: float = 300,
+    min_neighbors: int = 10,
+    max_samples: int = 1000,
+    auto_tune: bool = True,
+    tune_subsample_frac: float = 0.05,
+    tune_iterations: int = 5,
+    length_scale_val: float | list[float] = 1.0,
+    noise_val: float = 0.1,
+    optimization_mode: str = 'group',
+) -> np.ndarray:
     """
     Moving Window (Local GP) Validation with Adaptive Optimization.
     
@@ -966,9 +992,22 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
 
 
 
+def produce_kriging_map(
+    df: pd.DataFrame,
+    grid_lat: np.ndarray,
+    grid_lon: np.ndarray,
+    grid_time: np.ndarray,
+    target_col: str = 'temp',
+    radius_km: float = 300,
+    min_neighbors: int = 5,
+    final_length_scale: float | np.ndarray = 1.0,
+    final_noise: float = 0.1,
+    is_3d: bool = True,
+    time_buffer: int = 60,
+) -> xr.Dataset:
     """
     PHASE 3: PRODUCTION MAPPER (The Generator).
-    
+
     TO DO: IF YOU WANT TO KEEP USING THIS CODE (WHICH WORKS WITH LOARD_ARGO_DATA_ADVANCED,
       OR POSSIBLY TAKES OUTPUT FROM ArgoHeatContentDataCollider.estimate_ohc_from_raw_bins()), BEST
       LOOK INTO ADDING COASTLINES WITH THE HELP OF ARGOPY. ALTERNATIVELY, WE COULD MAKE ANOTHER
@@ -976,21 +1015,21 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
 
 
     Generates a continuous Gridded Map (NetCDF/Xarray) from sparse Argo data
-    using the "Fixed Kernel" parameters tuned in the Validation phase. DOES NOT 
-    INCLUDE COASTLINES YET. 
+    using the "Fixed Kernel" parameters tuned in the Validation phase. DOES NOT
+    INCLUDE COASTLINES YET.
 
     TAKES OUTPUT FROM load_argo_data_advanced()
 
-    
-    
+
+
     -------------------------------------------------------------------------
     STRATEGY: "Integrate First, Map Second"
     -------------------------------------------------------------------------
     Instead of 4D Kriging (Lat, Lon, Depth, Time), we rely on the user passing
-    pre-integrated layers (e.g., 'ohc_source'). This allows us to map each 
-    physical layer with its own unique correlation length (e.g., Surface = Chaotic, 
+    pre-integrated layers (e.g., 'ohc_source'). This allows us to map each
+    physical layer with its own unique correlation length (e.g., Surface = Chaotic,
     Deep = Smooth).
-    
+
     PARAMETERS:
     -----------
     df : pd.DataFrame
@@ -998,31 +1037,31 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
         - 'lat', 'lon' : Spatial coordinates (degrees).
         - 'time_days'  : Numeric time (e.g., days since start).
         - target_col   : The variable to interpolate (e.g., 'ohc_source').
-        
+
     grid_lat, grid_lon : 1D arrays
         The spatial mesh you want to produce (e.g., np.arange(30, 40, 0.5)).
-        
+
     grid_time : 1D array
         The time steps you want to produce (must match units of 'time_days').
-        
+
     target_col : str
         The specific column in 'df' to map (e.g. 'ohc_response').
-        
+
     radius_km : float
-        The "Horizon" of the model. Points further than this are ignored 
+        The "Horizon" of the model. Points further than this are ignored
         to save compute time. (Standard: ~300km).
-        
+
     final_length_scale : float or array-like
         The physical correlation length (in SIGMAS) you found during validation.
         Can be a scalar (isotropic) or an array matching dimensions (anisotropic).
-        
+
     final_noise : float
         The noise floor (uncertainty) you found during validation.
         (e.g., 0.1).
-        
+
     is_3d : bool
         If True, includes 'time_days' in the distance calculation.
-        
+
     time_buffer: int
         Number of days we are including in each time data point in our trend. Basically a time_buffer number of days
         will be combined to make a monthly map for us to study trends. This buffer smooths out our kriged fields. If
@@ -1037,14 +1076,6 @@ def validate_moving_window(df, feature_cols=['lat', 'lon'], target_col='temp',
         - 'uncertainty' (Standard Deviation / Error Bars)
     """
 
-def produce_kriging_map(df, 
-                        grid_lat, grid_lon, grid_time,
-                        target_col='temp',
-                        radius_km=300, min_neighbors=5,
-                        final_length_scale=1.0, final_noise=0.1,
-                        is_3d=True, time_buffer = 60):
-   
-    
     # ---------------------------------------------------------
     # 1. SETUP & SCALING
     # ---------------------------------------------------------
@@ -1298,80 +1329,81 @@ Feeds into ag.plot_kriging_snapshot()
         Values are DataFrames containing the raw True vs Predicted values for every test point.
         Useful for deep-dive statistical debugging (e.g., checking for bias).
     """
-def analyze_rolling_correlations(df, 
-                                 # --- DATA INPUTS ---
-                                 feature_cols=['lat_bin', 'lon_bin'], 
-                                 target_col='ohc_per_m',              
-                                 time_col='time_bin',                 
-                                 
-                                 # --- VALIDATION STRATEGY ---
-                                 k_fold_data_percent=10,      
-                                 
-                                 # --- OPTIMIZATION (HYPERPARAMETERS) ---
-                                 auto_tune=True,
-                                 tune_subsample_frac=0.1,     
-                                 tune_iterations=5,           
-                                 length_scale_val=1.0,        
-                                 noise_val=0.1,               
-                                 
-                                 # --- ROLLING WINDOW CONFIG ---
-                                 window_size_days=90,
-                                 step_size_days=30,
-                                 min_bins=10,
-                                 # Minimum number of spatial bins required to attempt a GP fit.
-                                 # Windows below this threshold are skipped silently (no row
-                                 # added to results_df). Default 10 preserves backward compatibility.
-                                 # Raise to ~80 to enforce a statistical floor and discard
-                                 # underdetermined windows (e.g. early-season sparse sampling)
-                                 # where the GP has too few degrees of freedom to constrain
-                                 # the kernel reliably.
+def analyze_rolling_correlations(
+    df: pd.DataFrame,
+    # --- DATA INPUTS ---
+    feature_cols: list[str] = ['lat_bin', 'lon_bin'],
+    target_col: str = 'ohc_per_m',
+    time_col: str = 'time_bin',
 
-                                 # --- AUTO-CALIBRATION (RELIABILITY CONTROL) ---
-                                 auto_calibrate=True,
-                                 target_z_bounds=(0.9, 1.1),
-                                 target_rmsre=0.05,
-                                 max_adjust_steps=3,
+    # --- VALIDATION STRATEGY ---
+    k_fold_data_percent: float = 10,
 
-                                 # --- 3D SPATIO-TEMPORAL MODE ---
-                                 mode='2D',
-                                 # '2D': original lat/lon only (default, backward-compatible).
-                                 # '3D': appends time_days as a third GP dimension.
-                                 #       The time coordinate is normalized per rolling window
-                                 #       so that window center = 0 and edges = ±1.
-                                 kernel_type='rbf',
-                                 # 'rbf'      : Squared Exponential / RBF kernel (default).
-                                 #              Infinitely differentiable; assumes smooth fields.
-                                 # 'matern0.5': Exponential kernel (Matern nu=0.5).
-                                 #              Once differentiable; allows sharper fronts.
-                                 #              Both options produce identical output columns,
-                                 #              so you can call this function twice with different
-                                 #              kernel_type values and compare results_df directly.
-                                 spatial_ls_upper_bound=5,
-                                 # Upper bound (in StandardScaler-normalized units) on the spatial
-                                 # length scales that the optimizer is allowed to find.
-                                 # Default 5 matches the historical setting for the Skin Layer.
-                                 # For deeper layers (e.g. Background 500–1000m) where spatial
-                                 # coherence is physically larger, pass a higher value (e.g. 10)
-                                 # to prevent the optimizer saturating at the bound wall, which
-                                 # causes artificially compressed anisotropy ratios.
-                                 time_ls_bounds_days=(2.0, 30.0),
-                                 # Physical lower/upper bound (in days) on the time length scale
-                                 # that the optimizer is allowed to find. Only used in mode='3D'.
-                                 # Lower bound (~2 days): prevents the model treating all obs as
-                                 # temporally uncorrelated (faster than ocean adjustment timescales).
-                                 # Raising this to ~15 days suppresses aliasing artifacts caused by
-                                 # the 10-day Argo resurface cycle beating against the window step.
-                                 # Upper bound (~30-45 days): prevents the model ignoring time
-                                 # entirely and degenerating to a 2D spatial climatology.
+    # --- OPTIMIZATION (HYPERPARAMETERS) ---
+    auto_tune: bool = True,
+    tune_subsample_frac: float = 0.1,
+    tune_iterations: int = 5,
+    length_scale_val: float | list[float] = 1.0,
+    noise_val: float = 0.1,
 
-                                 # --- GIBBS NON-STATIONARY KERNEL CONFIG ---
-                                 # Only used when kernel_type='gibbs'. Dict of GibbsKernel
-                                 # constructor kwargs; see GibbsKernel docstring for full key list.
-                                 # Required keys: l_min_km, l_max_km, d_transition_init_km,
-                                 # d_transition_bounds_km, k_steepness_init, k_steepness_bounds,
-                                 # anisotropy_lat_lon_ratio, anisotropy_lat_lon_ratio_bounds.
-                                 gibbs_params=None,
-                                 ):
+    # --- ROLLING WINDOW CONFIG ---
+    window_size_days: int = 90,
+    step_size_days: int = 30,
+    min_bins: int = 10,
+    # Minimum number of spatial bins required to attempt a GP fit.
+    # Windows below this threshold are skipped silently (no row
+    # added to results_df). Default 10 preserves backward compatibility.
+    # Raise to ~80 to enforce a statistical floor and discard
+    # underdetermined windows (e.g. early-season sparse sampling)
+    # where the GP has too few degrees of freedom to constrain
+    # the kernel reliably.
+
+    # --- AUTO-CALIBRATION (RELIABILITY CONTROL) ---
+    auto_calibrate: bool = True,
+    target_z_bounds: tuple[float, float] = (0.9, 1.1),
+    target_rmsre: float = 0.05,
+    max_adjust_steps: int = 3,
+
+    # --- 3D SPATIO-TEMPORAL MODE ---
+    mode: str = '2D',
+    # '2D': original lat/lon only (default, backward-compatible).
+    # '3D': appends time_days as a third GP dimension.
+    #       The time coordinate is normalized per rolling window
+    #       so that window center = 0 and edges = ±1.
+    kernel_type: str = 'rbf',
+    # 'rbf'      : Squared Exponential / RBF kernel (default).
+    #              Infinitely differentiable; assumes smooth fields.
+    # 'matern0.5': Exponential kernel (Matern nu=0.5).
+    #              Once differentiable; allows sharper fronts.
+    #              Both options produce identical output columns,
+    #              so you can call this function twice with different
+    #              kernel_type values and compare results_df directly.
+    spatial_ls_upper_bound: float = 5,
+    # Upper bound (in StandardScaler-normalized units) on the spatial
+    # length scales that the optimizer is allowed to find.
+    # Default 5 matches the historical setting for the Skin Layer.
+    # For deeper layers (e.g. Background 500–1000m) where spatial
+    # coherence is physically larger, pass a higher value (e.g. 10)
+    # to prevent the optimizer saturating at the bound wall, which
+    # causes artificially compressed anisotropy ratios.
+    time_ls_bounds_days: tuple[float, float] = (2.0, 30.0),
+    # Physical lower/upper bound (in days) on the time length scale
+    # that the optimizer is allowed to find. Only used in mode='3D'.
+    # Lower bound (~2 days): prevents the model treating all obs as
+    # temporally uncorrelated (faster than ocean adjustment timescales).
+    # Raising this to ~15 days suppresses aliasing artifacts caused by
+    # the 10-day Argo resurface cycle beating against the window step.
+    # Upper bound (~30-45 days): prevents the model ignoring time
+    # entirely and degenerating to a 2D spatial climatology.
+
+    # --- GIBBS NON-STATIONARY KERNEL CONFIG ---
+    # Only used when kernel_type='gibbs'. Dict of GibbsKernel
+    # constructor kwargs; see GibbsKernel docstring for full key list.
+    # Required keys: l_min_km, l_max_km, d_transition_init_km,
+    # d_transition_bounds_km, k_steepness_init, k_steepness_bounds,
+    # anisotropy_lat_lon_ratio, anisotropy_lat_lon_ratio_bounds.
+    gibbs_params: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, dict[float, pd.DataFrame]]:
     """
     Performs a "Rolling Window" Gaussian Process analysis to assess how ocean physics 
     (spatial correlation) and model reliability change over time.
@@ -1570,7 +1602,12 @@ def analyze_rolling_correlations(df,
             # 2D mode, or 3D with auto_tune=False (all bounds "fixed").
             l_bounds = spatial_l_bounds
 
-        def _build_kernel(ls, n_level, ls_bnd, n_bnd):
+        def _build_kernel(
+            ls: float | list[float] | None,
+            n_level: float,
+            ls_bnd: str | tuple[float, float],
+            n_bnd: str | tuple[float, float],
+        ) -> Kernel:
             # Kernel factory. Captures kernel_type and gibbs_params from outer scope.
             # gibbs: non-stationary GibbsKernel (ignores ls/ls_bnd; uses gibbs_params).
             # matern0.5: exponential, sharper fronts. rbf: smooth squared-exponential.
@@ -1736,16 +1773,35 @@ def analyze_rolling_correlations(df,
 
 
 
-"""
-PIPELINE: TAKES OUTPUT FROM ArgoGPR.analyze_rolling_correlations()
-
+def plot_kriging_snapshot(
+    df_raw: pd.DataFrame,
+    results_df: pd.DataFrame,
+    target_date: float,
+    # --- CONFIG ---
+    feature_cols: list[str] = ['lat_bin', 'lon_bin'],  # Must match what you ran analysis with
+    target_col: str = 'ohc_per_m',
+    time_col: str = 'time_bin',  # The column name in df_raw
+    window_size_days: float = 90,
+    grid_res: float = 0.5,
+    cmap: str = 'magma_r',
+    # --- LABEL CONFIG ---
+    # units_label: SI unit string shown on colorbars.
+    # If None, auto-detected: ohc_per_m -> J/m², temperature -> °C.
+    # time_epoch: the reference date (datetime.date) that window_center
+    # is measured from. Used to convert numeric center to a readable
+    # "Month YYYY" string for the plot title.
+    units_label: str | None = None,
+    time_epoch: dt.date | None = None,
+) -> None:
+    """
+    PIPELINE: TAKES OUTPUT FROM ArgoGPR.analyze_rolling_correlations()
 
     Diagnostic Tool: Reconstructs a GP model for a specific date using TUNED parameters
     and plots a spatial map with error bars.
 
     Unlike 'produce_kriging_map' (which uses a moving neighborhood for mass production),
-    this function performs 'Windowed Global Kriging'. It fits a single GP to ALL data 
-    in the time window. This is ideal for inspecting the physics and quality of your 
+    this function performs 'Windowed Global Kriging'. It fits a single GP to ALL data
+    in the time window. This is ideal for inspecting the physics and quality of your
     tuned parameters, but does not scale to thousands of points.
 
     Parameters:
@@ -1761,25 +1817,7 @@ PIPELINE: TAKES OUTPUT FROM ArgoGPR.analyze_rolling_correlations()
     grid_res : float
         Resolution of the output map in degrees (e.g., 0.5 deg).
     """
-def plot_kriging_snapshot(df_raw,
-                          results_df,
-                          target_date,
-                          # --- CONFIG ---
-                          feature_cols=['lat_bin', 'lon_bin'], # Must match what you ran analysis with
-                          target_col='ohc_per_m',
-                          time_col='time_bin',        # The column name in df_raw
-                          window_size_days=90,
-                          grid_res=0.5,
-                          cmap='magma_r',
-                          # --- LABEL CONFIG ---
-                          # units_label: SI unit string shown on colorbars.
-                          # If None, auto-detected: ohc_per_m -> J/m², temperature -> °C.
-                          # time_epoch: the reference date (datetime.date) that window_center
-                          # is measured from. Used to convert numeric center to a readable
-                          # "Month YYYY" string for the plot title.
-                          units_label=None,
-                          time_epoch=None):
-    
+
     # ---------------------------------------------------------
     # 1. PARAMETER LOOKUP (The Bridge)
     # ---------------------------------------------------------
@@ -1949,8 +1987,13 @@ def plot_kriging_snapshot(df_raw,
 
     TAKES THE OUTPUT FROM ARGOPPR.analyze_rolling_correlations()
 """
-def plot_physics_history(results_df, cv_details=None, time_unit='days',
-                         save_dir=None, run_id=None):
+def plot_physics_history(
+    results_df: pd.DataFrame,
+    cv_details: dict[float, pd.DataFrame] | None = None,
+    time_unit: str = 'days',
+    save_dir: str | None = None,
+    run_id: str | None = None,
+) -> None:
     """
     Visualizes the evolution of Ocean Physics, Model Reliability, and Error Statistics.
     Saves each subplot as a separate PNG if save_dir and run_id are provided.
@@ -1974,7 +2017,7 @@ def plot_physics_history(results_df, cv_details=None, time_unit='days',
     # Helper: optionally save a figure to disk as {prefix}_{run_id}.png, then close it.
     # Only writes if both save_dir and run_id are provided so callers can
     # freely omit those args during interactive exploration.
-    def _save_fig(fig, prefix):
+    def _save_fig(fig: plt.Figure, prefix: str) -> None:
         if save_dir is not None and run_id is not None:
             path = os.path.join(save_dir, f"{prefix}_{run_id}.png")
             fig.savefig(path, dpi=150, bbox_inches='tight')
@@ -2079,8 +2122,13 @@ def plot_physics_history(results_df, cv_details=None, time_unit='days',
     plt.show()
 
 
-def plot_float_coverage(results_df, min_bins_threshold=10, save_dir=None, run_id=None,
-                        time_unit='days'):
+def plot_float_coverage(
+    results_df: pd.DataFrame,
+    min_bins_threshold: int = 10,
+    save_dir: str | None = None,
+    run_id: str | None = None,
+    time_unit: str = 'days',
+) -> None:
     """
     Diagnostic plot: number of Argo float observations (spatial bins) per rolling
     window as a function of time, overlaid with the per-window RMSRE.

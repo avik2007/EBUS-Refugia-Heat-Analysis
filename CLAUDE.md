@@ -29,6 +29,12 @@ New pipeline runs should be driven by YAML configs in `configs/<region>/`, not b
 
 ---
 
+## Plan Storage
+
+All Superpowers plans (`writing-plans`, plan-mode/`EnterPlanMode`, `executing-plans`, etc.) for this project go to `.claude/plans/` inside this repo, not the global `~/.claude/plans/`. Keeps plan history with the project instead of mixed into the cross-project global folder.
+
+---
+
 ## Workflow Principles
 
 1. **Plan mode** for any task with 3+ steps or architectural decisions. Re-plan if derailed.

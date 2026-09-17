@@ -2,6 +2,26 @@
 
 ---
 
+## 2026-08-30 — HLN Small-Sample DM Correction & Vertical Delta Analysis Script
+
+**Action:** Onboarded Antigravity agent, completed Harvey–Leybourne–Newbold (HLN 1997) finite-sample correction in `compare_kernels.py`, implemented `vertical_delta_analysis.py`, and handed off to Claude for review and execution.
+
+### 1. Hardened Statistical Significance Testing (`compare_kernels.py`)
+*   **Harvey–Leybourne–Newbold (HLN 1997) Correction:** Added modified test statistic $DM^* = DM \times \left[ \frac{N + 1 - 2h + h(h-1)/N}{N} \right]^{1/2}$ and Student's $t(N-1)$ distribution evaluation.
+*   **Dynamic Lag Derivation:** Derived overlap lag dynamically from rolling window configuration: $h = \lfloor \frac{W - 1}{S} \rfloor = 4$ for $W=45\text{d}, S=10\text{d}$.
+*   **Re-evaluated Verdict:**
+    *   **Skin Layer (0–100m):** $DM^* = 2.864$, $p = 3.55 \times 10^{-3} < 0.01$.
+    *   **Source Layer (150–400m):** $DM^* = 1.840$, $p = 0.0374 < 0.05$. (Verdict holds: Gibbs remains statistically superior at the 95% level).
+    *   **Background Layer (500–1000m):** $DM^* = 4.546$, $p = 3.65 \times 10^{-5} \ll 0.001$.
+
+### 2. Created Vertical Delta Analysis Script (`vertical_delta_analysis.py`)
+*   **Objective:** Systematic cross-layer audit comparing the Source Layer (150–400m) with Background Layer (500–1000m) to test the Stealth Warming hypothesis.
+*   **Dynamical & Regime Features:** Evaluates meridional anisotropy ($\mathcal{A} > 1.0$) in the California Undercurrent corridor vs. deep baseline, and cross-shelf regime transition midpoint $d_0$.
+*   **Outputs Configured:** Saves publication-quality 4-panel synthesis plots to `AEResults/aeplots/vertical_delta/` and audit metrics to `AEResults/aelogs/vertical_delta_californiav3_2015.csv`.
+*   **Handoff Note:** Logged handoff task at the top of `argo_claude_actions/AE_claude_todo.md` for Claude to review and run in `ebus-cloud-env`.
+
+---
+
 ## 2026-07-17 — Gibbs vs Matérn Statistical Audit Completed (Diebold-Mariano & Block Bootstrap)
 
 **Action:** Implemented a rigorous kernel comparison script (`compare_kernels.py`) to run Diebold-Mariano and overlapping block-bootstrap significance tests on the Matérn vs. Gibbs validation metrics across all scientific layers. Updated task tracking.

@@ -154,9 +154,11 @@ def build_manifest(
     }
 
 
-def _call_run_diagnostic_inspection(**kwargs):
+def _call_run_diagnostic_inspection(**kwargs: Any) -> Any:
     # Thin shim: defers import of the GPR script so runner.py stays cheap to import.
     # Tests monkeypatch this whole function instead of the real script.
+    # kwargs: forwarded verbatim to script 05's run_diagnostic_inspection; return
+    # is whatever that function returns (normally a dict, see run_analysis below).
     import importlib.util
     import sys
     from pathlib import Path
@@ -277,9 +279,10 @@ def run_analysis(
 INGESTION_AELOGS_DIR = Path("AEResults/aelogs/ingestion")
 
 
-def _call_run_ingestion(**kwargs):
+def _call_run_ingestion(**kwargs: Any) -> Any:
     # Thin shim around script 02's run_ingestion_pipeline seam.
     # Tests monkeypatch this entire function; production loads the real script.
+    # kwargs: forwarded verbatim to script 02's run_ingestion_pipeline.
     import importlib.util
     import sys
     from pathlib import Path
