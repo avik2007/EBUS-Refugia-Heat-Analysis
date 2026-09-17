@@ -279,6 +279,26 @@ def test_out_of_window_points_dropped():
 
 
 # ---------------------------------------------------------------------------
+# test_custom_depth_range_is_respected
+# The window-dropping behavior above only exercises the DEFAULT depth_min=0,
+# depth_max=2000. depth_min/depth_max are themselves the "CRITICAL: Respecting
+# chosen depth" params threaded from Script 02's per-layer call (Skin/Source/
+# Background use different windows) -- this pins that a non-default window is
+# actually honored, not just the default one. "full" coverage has one point
+# every 10m from 5m to 1995m; [150, 400) contains exactly 25 of them
+# (155, 165, ..., 395).
+# ---------------------------------------------------------------------------
+def test_custom_depth_range_is_respected():
+    df = make_synthetic_df("full")
+    result = estimate_ohc_from_raw_bins(df, depth_min=150, depth_max=400)
+    assert len(result) == 1
+    assert result["n_raw_points"].iloc[0] == 25
+    assert np.isclose(
+        result["ohc_per_m"].iloc[0], result["ohc"].iloc[0] / 250.0, rtol=1e-9
+    )
+
+
+# ---------------------------------------------------------------------------
 # test_gate_excludes_when_paired_shallow_and_deep
 # Unstack a shallow-only bin next to a deep-only bin (different lat bins). The
 # shared column space now spans the whole water column, so the shallow row has
