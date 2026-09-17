@@ -14,13 +14,45 @@ import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import gsw
-from datetime import datetime   
+from datetime import datetime
 
 
-def calculate_thermodynamics(sp, t, p, lon, lat):
+# =============================================================================
+# DORMANT CODE — read before reusing.
+#
+# `calculate_thermodynamics` + `compute_ohc_layer` below are the ORIGINAL
+# xarray/apply_ufunc approach to Ocean Heat Content: compute a per-point energy
+# density (J/m^3) for one ocean column, then integrate it over depth to get
+# OHC (J/m^2). The lineage is the root script `ArgoHeatContentDataCollater.py`,
+# which this module was split out from.
+#
+# Physical convention here: energy density = rho * cp_t_exact * t, i.e. it uses
+# IN-SITU temperature `t` (in degC), giving heat content relative to 0 degC.
+# In-situ T is paired with in-situ cp (`gsw.cp_t_exact`), so this pair is
+# internally consistent.
+#
+# STATUS: dormant. No pipeline stage imports `calculate_thermodynamics` or
+# `compute_ohc_layer`. The LIVE OHC path is `estimate_ohc_from_raw_bins` further
+# down this file (used by 01_ae_cloud_ingestion.py and 02_ae_cloud_run.py).
+# That function uses CONSERVATIVE temperature `CT` instead of in-situ `t`
+# (rho * cp_t_exact * CT). The two conventions therefore diverge by ~0.1-1 degC
+# of temperature (~0.1-1% of OHC in CCS waters). This divergence is left
+# unreconciled on purpose, pending a science-partner decision on the correct
+# TEOS-10 convention.
+#
+# Not deleted: this remains the candidate implementation for a future
+# gridded-xarray OHC path.
+# =============================================================================
+def calculate_thermodynamics(
+    sp: np.ndarray, t: np.ndarray, p: np.ndarray, lon: np.ndarray, lat: np.ndarray
+) -> np.ndarray:
     """
     Wrapper for GSW functions to be used with apply_ufunc.
     Inputs are expected to be numpy arrays (handled by xarray wrapper).
+
+    sp: practical salinity (PSU). t: in-situ temperature (degC).
+    p: sea pressure (dbar). lon/lat: decimal degrees.
+    Returns: energy density (J/m^3) = rho * cp_t_exact * t (in-situ convention).
     """
     # 1. Absolute Salinity (SA)
     # GSW requires (SP, P, lon, lat)
@@ -41,9 +73,15 @@ def calculate_thermodynamics(sp, t, p, lon, lat):
     return rho * cp * t
 
 
-# once we have the ability to calculate thermodynamics for one ocean column, we can incorporate it into 
+# once we have the ability to calculate thermodynamics for one ocean column, we can incorporate it into
 # a function that makes xarray inputs/outputs
-def compute_ohc_layer(ds_input, layer_label):
+# DORMANT: see the block above `calculate_thermodynamics`. Nothing in the pipeline
+# calls this; the live OHC path is `estimate_ohc_from_raw_bins`.
+def compute_ohc_layer(ds_input: xr.Dataset, layer_label: str) -> xr.DataArray | None:
+    # ds_input: profile Dataset with PSAL/TEMP/PRES_INTERPOLATED/LONGITUDE/LATITUDE
+    # variables for one vertical layer. layer_label: name assigned to the output
+    # DataArray (e.g. "Source"). Returns integrated OHC (J/m^2) as a DataArray,
+    # or None if required variables are missing.
     # Ensure inputs are present
     # Salinity sensors can be fouled up in Argo sensors, so we have to account for this possibility
     if 'PSAL' not in ds_input or 'TEMP' not in ds_input:
@@ -85,17 +123,27 @@ def compute_ohc_layer(ds_input, layer_label):
     return ohc
 
 
-"""
-    Calculates OHC by pooling ALL raw data in a Lat/Lon/Time box into one 
+def estimate_ohc_from_raw_bins(
+    df: pd.DataFrame,
+    resolution_lat: float = 1.0,
+    resolution_lon: float = 1.0,
+    resolution_time_days: float = 30,
+    depth_min: float = 0,
+    depth_max: float = 2000,
+    vertical_step: float = 10,
+    min_coverage_pct: float = 0.1,  # Lowered default to 10%
+) -> pd.DataFrame:
+    """
+    Calculates OHC by pooling ALL raw data in a Lat/Lon/Time box into one
     'Synthetic Profile' and integrating it. DESIGNED TO TAKE INPUTS FROM
     load_argo_data_advanced().
-    
+
     STRATEGY:
     1. Binning: Assign every raw measurement (from any float) to a 3D Bin.
     2. Thermodynamics: Calculate Energy Density (J/m^3) for every point.
     3. Vertical Interpolation: Average the energy density into standard vertical steps (e.g. every 10m).
     4. Integration: Integrate the vertical profile to get OHC (J/m^2).
-    
+
     Parameters:
     -----------
     df : pd.DataFrame
@@ -112,23 +160,13 @@ def compute_ohc_layer(ds_input, layer_label):
     min_coverage_pct : float
         Robustness threshold. The profile must cover this fraction of the water column
         (AND have surface/deep data) to be considered valid.
-        
+
     Returns:
     --------
     df_binned : pd.DataFrame
         One row per Lat/Lon/Time bin with 'ohc', 'ohc_per_m', 'n_points', etc.
     """
 
-def estimate_ohc_from_raw_bins(df, 
-                               resolution_lat=1.0, 
-                               resolution_lon=1.0, 
-                               resolution_time_days=30,
-                               depth_min=0, 
-                               depth_max=2000,
-                               vertical_step=10, 
-                               min_coverage_pct=0.1): # Lowered default to 10%
-    
-    
     print(f"📦 BINNING RAW DATA: {resolution_lat}° x {resolution_lon}° x {resolution_time_days} days...")
     
     # Work on a copy to avoid SettingWithCopy warnings

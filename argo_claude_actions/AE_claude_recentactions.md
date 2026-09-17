@@ -2,6 +2,401 @@
 
 ---
 
+## 2026-08-30 — Qwen handoff dir + thermodynamics test suite + Antigravity migration
+
+### 1. `argo_qwen_actions/` created (multi-agent handoff)
+- New dir mirrors `argo_{claude,gemini}_actions/`: `AE_qwen_{todo,recentactions,lessons}.md`
+  + dated task briefs `YYYY-MM-DD_HHMM_<slug>.md`. Convention documented in `CONVENTIONS.md`
+  (new "## Multi-agent task handoff" section). Commit `0c6b978`.
+
+### 2. `ArgoEBUSCloud/test_thermodynamics.py` — 15 tests, all pass (commit `5f63c7c`)
+- Covers `estimate_ohc_from_raw_bins` (live OHC path): GSW thermodynamics `rho*cp*CT`,
+  bin arithmetic, vertical cut + depth-window drop, synthetic-profile pooling, coverage
+  gate (incl. paired-bin exclusion), trapezoid integration, interior-NaN interpolation,
+  schema/dtypes, NaN-input characterization. Coastline dep stubbed via autouse monkeypatch.
+- Drafted by Qwen via aider (two rounds lost to an aider fence-parse bug → empty file +
+  junk file; recovered from `.aider.chat.history.md`). Claude fixed 5 failing tests
+  (ndarray `.sort_values`, undefined `sort()`, wrong neg-lon expectation, hardcoded
+  rounded anchor, all-out-of-window case) + added the NaN test + verbose comments.
+- Dead-code comment block added to `calculate_thermodynamics` / `compute_ohc_layer` in
+  `argoebus_thermodynamics.py`: dormant, in-situ-t convention, superseded by the CT path.
+
+### 3. Antigravity migration (was todo #-3) — DONE
+- Gemini CLI discontinued 2026-08-30; science-partner role → Google Antigravity.
+  Prose-only, NO renames (Antigravity reads `gemini`-labeled files).
+- Edited: `GEMINI.md` (header note + role prose), `CLAUDE.md:68`, `~/.claude/CLAUDE.md`
+  (dual-graph blurb; `--gemini` flag name kept), auto-memory `feedback_workflow.md`,
+  `argo_gemini_actions/AE_gemini_{todo,lessons,recentactions}.md` titles + the one open
+  `[For Antigravity]` research item. Historical dated files left untouched.
+- Memory `project_antigravity_migration.md` marked complete.
+
+---
+
+## 2026-07-17 (session 19) — LinkedIn post drafted, RBF-proxy + GibbsKernel time_ls bugs found and fixed
+
+### Summary
+Started as a LinkedIn-post content task (Gibbs kernel results). Ended up finding and fixing a real
+units bug in `GibbsKernel`, discovering a second window-design limitation, and re-running all 3
+Gibbs layers. Post is drafted but paused pending final framing decision (see todo #0).
+
+### 1. LinkedIn post drafting + chart accuracy corrections
+- Initial claim ("Gibbs drops variance 1 order of magnitude") verified against real data:
+  Z-score std (calibration), Matérn 1.05–2.63 → Gibbs 0.07–0.10, confirmed ~10–37x tighter.
+- Caught and corrected a mislabeling risk: user asked to relabel the Z-std chart as "error" —
+  flagged that Z-std is calibration, not prediction error (RMSRE only improved 18–27%, not 10x).
+  Resolved by building **two** charts instead of one, each honestly labeled to its own metric.
+- Built with `dataviz` skill conventions (validated categorical palette: blue=Matérn, green=Gibbs,
+  consistent across all charts this session).
+
+### 2. `plot_kriging_snapshot` RBF-proxy bug found (not fixed — out of scope, illustration-only)
+- User asked for an actual kriged-field + uncertainty map to accompany the post.
+- Traced `plot_kriging_snapshot` (`argoebus_gp_physics.py:1741`): it **always** reconstructs the
+  field as a single-lengthscale RBF proxy from one scalar `scale_lat_bin`/`scale_lon_bin` value,
+  regardless of whether the real run used RBF, Matérn, or Gibbs. For Gibbs, that scalar is the
+  sigmoid lengthscale evaluated at the window's *median* distance-to-coast — so the existing
+  snapshot PNGs cannot show Gibbs's actual non-stationary (distance-varying) structure.
+- Also confirmed via code trace: this proxy is visualization-only, never feeds back into
+  `rmsre`/`std_z`/the audit CSV — the real CV-scored numbers were never affected by this.
+- Wrote new standalone illustration code (scratchpad, not committed) that pulls the real raw
+  parquet from S3, reconstructs the *actual* fitted `GibbsKernel` / `Matern(nu=0.5)` per window
+  (fixed hyperparameters from the audit CSV, `optimizer=None`, no re-fit), and predicts on a grid
+  using `calculate_dist_to_coast` (`ae_utils.py`) for the grid's distance-to-coast values. Confirmed
+  this also incidentally fixes a second RBF-proxy defect: predicted-field colorbar ranges no longer
+  mismatch 2x between kernels (was an RBF-proxy artifact, not a real Matérn instability).
+
+### 3. GibbsKernel time_ls units bug — found, investigated, fixed (production code change)
+- While building the real-kernel illustration, traced `GibbsKernel.__call__` line by line and found
+  `dt` (from the window-normalized time column, range ≈[-1,+1]) was divided directly by
+  `self._time_ls` (physical days) — no conversion between the two ever happens anywhere in the file
+  (confirmed by exhaustive grep). The Matérn path does this conversion correctly
+  (`ls_time_scaled = scale_time_bin_days / half_window`) — used as the working-pattern control.
+- Used `systematic-debugging` skill. Empirical Phase-1 evidence on real window-9 data (californiav3
+  Source layer): Gibbs log-marginal-likelihood range across a 15–90d `time_ls` sweep was only 5.1
+  units, vs 62 units for the correctly-scaled Matérn-equivalent sweep — ~12x weaker sensitivity,
+  confirming the bug materially affects fitted behavior, not just cosmetics.
+- **Fix** (`ArgoEBUSCloud/ebus_core/argoebus_gp_physics.py`): added `window_size_days` constructor
+  param to `GibbsKernel` (threaded through `get_params`, `clone_with_theta`, and the `_build_kernel`
+  call site inside `analyze_rolling_correlations`); `__call__` now converts `dt` to days
+  (`dt_days = dt_normalized * window_size_days / 2.0`) before dividing by `time_ls`.
+- **TDD**: new test `test_gibbs_kernel_time_ls_converts_normalized_dt_to_days`
+  (`test_mlops_foundation.py`) written and confirmed failing (`TypeError`, param didn't exist) before
+  the fix, passing after. One pre-existing test (`test_analyze_rolling_correlations_gibbs_branch`)
+  needed a float-tolerance relaxation on a hard `>=50.0` bound check — confirmed via `git stash` that
+  it passed cleanly pre-fix and only failed post-fix due to floating-point boundary noise from the
+  optimizer's landing point shifting (not a fix defect). Full suite: 66 passed, 0 unrelated
+  regressions (from repo root; note `test_mlops_foundation.py`'s CLI subprocess tests assume repo
+  root as cwd, not `ArgoEBUSCloud/` — unrelated pre-existing behavior, not a bug).
+
+### 4. Gibbs 3-layer re-run + second finding: time_ls unresolvable at 45-day window
+- Re-ran all 3 layers (`configs/californiav3/californiav3_d{0_100,150_400,500_1000}_gibbs_timelsfix.yaml`,
+  `run_suffix: "_timelsfix"` — new output dirs, nothing overwritten) via `aebus_cli.py analyze`.
+- First re-run (bounds unchanged, `time_ls_bounds_days: [15,90]`): Skin layer pegged at the upper
+  bound in **34/34 windows**, zero variance — a hard-wall optimizer artifact, not a resolved value.
+- Widened bounds to `[15,200]`, re-ran all 3: still pegged in the large majority of windows
+  (Skin 34/34, Source 32/34, Background 33/34) — confirmed this is **not a bound-too-tight issue**,
+  it's a window-design limitation: a 45-day rolling window cannot identify temporal decorrelation
+  timescales this long, regardless of the ceiling given to the optimizer.
+- User decision: report `time_ls_days` as a floor ("≥200d, unresolvable within this window") for all
+  3 layers rather than chase a precise number further; do not widen `window_size_days` itself this
+  session (bigger methodological change, deferred).
+- **Result: RMSRE and Z-std/calibration numbers are essentially unchanged pre- vs post-fix** (see
+  table below) — the LinkedIn post's core claims survive untouched. Only the "time persistence
+  increases with depth: 44d→54d→58d" claim from session 17 is invalidated and must not be reused.
+
+| Layer | RMSRE (old → new) | Z-std (old → new) | time_ls (old claim → corrected) |
+|---|---|---|---|
+| Skin | 3.49% → 3.71% | 0.10 → 0.088 | 44d → ≥200d, unresolvable (34/34 pegged) |
+| Source | 2.54% → 2.63% | 0.10 → 0.083 | 54d → ≥200d, unresolvable (32/34 pegged, range 157–200) |
+| Background | 1.84% → 2.03% | 0.07 → 0.100 | 58d → ≥200d, unresolvable (33/34 pegged, range 75–200) |
+
+### 5. Repository hygiene
+- Updated `argo_claude_actions/AE_claude_lessons.md` — added lesson #6 (units-mismatch pattern +
+  root-cause + fix + downstream implications).
+- Updated `argo_claude_actions/AE_claude_todo.md` — corrected ACTIVE #1 (Gemini briefing item) to
+  flag the superseded time-persistence claim; added ACTIVE #0 for resuming the LinkedIn post.
+- New files: `configs/californiav3/californiav3_d{0_100,150_400,500_1000}_gibbs_timelsfix.yaml`;
+  new run outputs under `AEResults/aelogs/*_timelsfix/`. All additive — no existing files deleted
+  or overwritten.
+
+### Next steps (see top of `AE_claude_todo.md`)
+- Decide LinkedIn post framing (RMSRE + calibration only, vs. also including the bug-fix story) and
+  resume/finish it — scratchpad chart/image files from this session will not persist, regenerate.
+- Brief Gemini per corrected ACTIVE #1 item (does NOT include the old time-persistence trend).
+- Open question for Gemini: is it worth widening `window_size_days` to try to actually resolve
+  temporal persistence, or treat "unresolvable at 45d" as the finding itself?
+
+---
+
+## 2026-07-07 (session 18) — MLD/N² diagnostics + kernel significance testing planned (no code written)
+
+### Summary
+Planning-only session, closed out for `/clear`. No pipeline code touched.
+
+### 1. Mixed layer depth / buoyancy question (from user's interview prep)
+Logged an interviewer question — does stealth warming deepen the mixed layer / weaken boundary-layer
+buoyancy via reduced N² below the mixed layer — to `argo_gemini_actions/AE_gemini_todo.md` (Priority 2)
+as a research item for Gemini. Assessed as plausible-but-indirect; does not change the 3-layer design.
+
+### 2. MLD + Brunt-Väisälä (N²) diagnostics — planned, deferred by user request
+Drafted full design for 3 new functions in `ebus_core/argoebus_thermodynamics.py`:
+- `calculate_buoyancy_frequency(sa, ct, p, lat)` — wraps `gsw.Nsquared`
+- `compute_mld_from_profile(sa, ct, p, ref_depth=10.0, density_threshold=0.03)` — de Boyer Montégut
+  (2004) density-threshold criterion, confirmed with user (Δσθ=0.03 vs 10m ref); well-mixed-profile
+  edge case defaults to NaN (not max-depth) pending confirmation
+- `estimate_mld_n2_from_raw_bins(df, ...)` — mirrors `estimate_ohc_from_raw_bins` binning structure;
+  profile grouping key = `(platform_number, time_days)` since raw ERDDAP schema has no cycle_number
+Wrote full TDD test list (5 tests per function) per user instruction — tests defined, no implementation
+written. Full pipeline wiring into `02_ae_cloud_run.py` (new S3 raw-profile path, new cloud run) explicitly
+scoped OUT for now per user — cost/irreversibility flagged, deferred to separate approval.
+
+### 3. Kernel significance testing (Gibbs vs Matern 5/2 RMSRE) — methodology settled, deferred
+Diagnosed why naive paired tests are wrong here: rolling windows overlap (`step_size_days` <
+`window_size_days` in `05_ae_rmsre_optimization.py`), so per-window RMSRE is autocorrelated, not i.i.d.
+**Recommended test: Diebold-Mariano** (HAC/Newey-West variance, truncation lag = window/step ratio − 1,
+small-sample Harvey-Leybourne-Newbold correction) on the per-window RMSRE differential. Secondary:
+paired Wilcoxon (flagged optimistic, ignores autocorrelation). Effect size: block-bootstrap CI.
+Planned as future standalone script (`06_ae_kernel_significance_test.py` or similar) — not written yet.
+
+### 4. Repository hygiene
+- Updated `argo_gemini_actions/AE_gemini_todo.md` (new research item) and
+  `argo_gemini_actions/AE_gemini_lessons.md` (new reminder section).
+- Updated `argo_claude_actions/AE_claude_lessons.md` — added entry #5: use statistical significance
+  tests (Diebold-Mariano), not raw summary-stat deltas, when judging pipeline variant improvements.
+
+### Next steps (see top of `AE_claude_todo.md`)
+- Implement MLD/N² diagnostic functions + tests (design above) once approved.
+- Implement kernel significance-test script once approved.
+- Gemini to review mixed-layer/buoyancy research question.
+
+---
+
+## 2026-05-26 (session 17) — Gibbs 3-layer validation complete
+
+### Summary
+Fixed two bugs in the Gibbs pipeline, widened time bounds, ran all 3 layers with Gibbs kernel,
+produced full Gibbs vs Matérn comparison. Gibbs wins on RMSRE and Z-calibration across all layers.
+Time persistence now learnable and increases with depth — consistent with stealth warming hypothesis.
+
+### Bugs fixed
+
+**`argoebus_gp_physics.py` — temporal persistence plot was blank:**
+- `scale_time_bin` was explicitly set to `np.nan` on the gibbs path. Fix: store `fitted_gibbs._time_ls`
+  (already in days) so the temporal persistence plot renders with real data.
+
+**`runner.py` — `--force-overwrite` raised ManifestCollisionError before deleting:**
+- `check_collision()` called unconditionally before `shutil.rmtree`. Fix: initialize `verdict = "fresh"`,
+  only call `check_collision` in the `else` branch. Applied to both `run_analysis` and `run_ingestion`.
+
+### Config changes
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml`: `time_ls_bounds_days` upper bound 45→90d
+- `configs/californiav3/californiav3_d0_100_gibbs.yaml`: new (Skin layer)
+- `configs/californiav3/californiav3_d500_1000_gibbs.yaml`: new (Background layer)
+
+### 3-layer Gibbs vs Matérn results
+
+| Layer | Matérn RMSRE | Gibbs RMSRE | Matérn Z mean±std | Gibbs Z mean±std |
+|-------|-------------|------------|------------------|-----------------|
+| Skin (0–100m) | 4.25% | 3.49% | 1.35 ± 1.30 | 0.98 ± 0.10 |
+| Source (150–400m) | 3.05% | 2.54% | 1.13 ± 1.05 | 0.97 ± 0.10 |
+| Background (500–1000m) | 2.50% | 1.84% | 1.72 ± 2.63 | 0.98 ± 0.07 |
+
+Matérn time_ls pegged at 45d (zero variance). Gibbs: Skin 44d, Source 54d, Background 58d — increases with depth.
+
+### Remaining convergence warnings (for Gemini)
+- `d_transition_bounds_km` upper 700km still hitting → consider 1000–1500km
+- `anisotropy_lat_lon_ratio` lower 1.0 hit ~40% Source windows → consider allowing 0.5
+
+---
+
+## 2026-05-26 (session 16) — GibbsKernel implemented + Source layer smoke run
+
+### Summary
+Implemented the full GibbsKernel (non-stationary, learnable sigmoid lengthscale of
+`dist_to_coast_km`) and wired it through the GPR pipeline. Key design change from plan:
+`anisotropy_lat_lon_ratio` made learnable (theta length 4 in 3D). Smoke run on
+californiav3 Source layer: 32/34 windows pass, median RMSRE 2.54% vs matern 3.05%.
+
+### What was done
+
+**GibbsKernel (`ArgoEBUSCloud/ebus_core/argoebus_gp_physics.py`):**
+- `__init__`: added `anisotropy_lat_lon_ratio_bounds=(1.0, 4.0)` + `_anisotropy_ratio` live mirror
+- `__call__`: full Gibbs spatial kernel (Paciorek & Schervish 2004) + Matern-0.5 time factor;
+  uses `self._anisotropy_ratio` (learnable, not fixed)
+- `theta` / `bounds` / `clone_with_theta` / `get_params` / `hyperparameters`: full sklearn API
+  — theta = `[log(d_0), log(k), log(time_ls), log(anisotropy)]`, length 4 in 3D
+- `_gibbs_optimizer`: scipy L-BFGS-B finite-difference wrapper (no analytic gradients needed)
+- `_lonlat_to_local_km`: equirectangular projection helper
+
+**Pipeline wiring:**
+- `analyze_rolling_correlations`: `kernel_type='gibbs'` branch — skips StandardScaler,
+  projects lat/lon to local km, appends dist_to_coast as aux column, dispatches GibbsKernel.
+  Result columns: `d_transition_km`, `k_steepness`, `time_ls_days`, `anisotropy_ratio`,
+  effective `scale_lat_bin`/`scale_lon_bin` (at median dist_to_coast, for kriging plots)
+- `05_ae_update_tomatern0.5.py`: `kernel_type`/`gibbs_params` kwargs, dynamic suffix
+  `_3dgibbs_w45` vs `_3dmatern_w45`
+- `ebus_core/runner.py`: packs `KernelGibbsBlock` → `gibbs_params` dict including
+  `anisotropy_lat_lon_ratio_bounds`
+- `ebus_core/config_schema.py`: added `anisotropy_lat_lon_ratio_bounds` to `KernelGibbsBlock`
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml`: Source layer gibbs config
+
+**Tests:** 12 new gibbs tests, all pass. 60 total passing, 0 new failures.
+
+### Smoke run results — californiav3 Source layer (150–400m)
+- **34 windows**, 32/34 pass RMSRE <5% (94%)
+- **Median RMSRE: 2.54%** (matern baseline: 3.05%)
+- **Z range: 0.61–1.16** (some underconfidence at Z<0.9 in later windows)
+- **Runtime: 132s**
+- Audit CSV + plots in `AEResults/aelogs/californiav3_..._d150_400_3dgibbs_w45/`
+
+### Convergence warnings (signals for Gemini)
+- `time_ls_init_days` hitting upper bound 45d frequently → widen to 60–90d
+- `d_transition_init_km` hitting upper bound 700km on many windows → widen to 1000–1500 km
+- `anisotropy_ratio` hitting lower bound 1.0 on ~40% of windows → optimizer wants
+  isotropic or zonal; consider allowing down to 0.5 for Source layer
+
+### Bugs fixed this session
+- Empty kriging plots: `scale_*` NaN on gibbs path fed into `plot_kriging_snapshot`.
+  Fix: store effective spatial scale (sigmoid at median dist_to_coast → degrees) so
+  the snapshot function has real values. **Needs re-run to verify fix.**
+
+---
+
+## 2026-05-26 (session 15) — Portfolio page polished + MLOps section added
+
+### Summary
+Polished the GitHub Pages portfolio page (em-dashes, anisotropy plot, MLOps section) and
+merged all changes to main. Reviewed the RG-Gibbs kernel plan. Branch cleanup.
+
+### What was done
+
+**Portfolio page changes (docs/index.html):**
+- Removed all 23 em-dashes (replaced with `:`, `,`, `;` by context)
+- Added Source layer anisotropy plot (`docs/images/anisotropy_source_layer.png`) in the
+  Key Finding section with caption
+- Added "Engineering Infrastructure" section (between Results and Key Finding) advertising
+  the MLOps CLI: 3 capability cards (Config-Driven Runs, Immutable Manifests, Run Registry +
+  Collision Guard), dark CLI code block (validate/analyze/list/show), stat chips
+  (54 tests, Pydantic v2, SHA-256, JSONL registry)
+- Fixed spacing in Gibbs v2 card: restored `Matérn` accent, removed `letter-spacing: .05em`
+  from badges (was gapping words), collapsed `<em>k</em>` orphan onto same source line
+- Switched back to `main`, deleted `temp-portfolio-push` workaround branch
+
+**Specs/plans written:**
+- `docs/superpowers/specs/2026-05-26-mlops-portfolio-section.md`
+- `docs/superpowers/plans/2026-05-26-mlops-portfolio-section.md`
+
+### PRs merged
+- PR #5: em-dash removal + anisotropy image (merged to main via conflict resolution)
+- PR #7: MLOps infrastructure section
+- PR #8: Gibbs v2 spacing fixes
+
+### Next up
+- **[ACTIVE #1]** Presentation slides — deadline next week (combined anisotropy figure,
+  kriging snapshot, depth-layer schematic, 4 slides)
+- **[ACTIVE]** RG-Gibbs kernel — plan reviewed and ready, awaiting approval to execute
+
+---
+
+## 2026-05-25 (session 14) — Portfolio page built and deployed
+
+### Summary
+Brainstormed, specced, planned, and deployed a static GitHub Pages portfolio page for the project
+at `https://avik2007.github.io/EBUS-Refugia-Heat-Analysis/`. Page matches the mhw-risk-profiler
+visual design system (Bootstrap 5.3.2, Inter/system-ui, same CSS variables and component classes).
+
+### What was built
+- `docs/index.html` — 8-section static portfolio page (navbar, hero, pipeline, data coverage,
+  results, key finding, what's next, footer)
+- `docs/superpowers/specs/2026-05-25-portfolio-page-design.md` — design spec
+- `docs/superpowers/plans/2026-05-25-portfolio-page.md` — implementation plan
+
+### Key decisions
+- **Static images only** (Option A): no Plotly, no JS — `float_tracks.png` + `ohc_kriged.png` +
+  `rmsre_cv_overlay.png` in arch-img-wrap containers
+- **Gibbs kernel** described in the v2 "What's Next" roadmap card with correct technical detail
+  (`l(d)` sigmoid, `dist_to_coast`, `d₀`, `k`, L-BFGS-B)
+- **Repo slug**: actual GitHub remote is `EBUS-Refugia-Heat-Analysis` (not `ArgoEBUSAnalysis`) —
+  corrected in both GitHub links after deployment
+
+### PRs merged
+- PR #4: full portfolio page + accessibility/responsive fixes (aria-hidden, rel attrs, lazy images,
+  col-md-4, data-bs-theme, navbar-brand as `<a>`)
+- PR #5: closed (conflicting) — superseded by PR #6
+- PR #6: URL slug fix (`ArgoEBUSAnalysis` → `EBUS-Refugia-Heat-Analysis`)
+
+### Live URL
+`https://avik2007.github.io/EBUS-Refugia-Heat-Analysis/` — returns 200
+
+---
+
+## 2026-05-19 (session 13) — 5-minute talk plan written
+
+### Summary
+Brainstormed a 4-slide mini-talk plan for a research presentation (5-min slot, ML-literate + mixed
+academic audience). Audited all existing plot assets in `AEResults/`. Plan saved to
+`docs/presentations/2026-05-19-mini-talk-plan.md`.
+
+### Key decisions
+- 4 slides: float census domain map → kriging snapshot → anisotropy contrast (Skin vs Source) → Z-score + Gibbs motivation
+- THE result slide: Source layer anisotropy (ratio > 1.0, meridional dominance Jan–Apr + Jun–Aug) vs Skin (zonal throughout)
+- Story arc: stealth warming question → Argo + 3D GPR → vertical anisotropy fingerprint → what's next (Gibbs)
+
+### Assets to make before talk (in todo as #1)
+1. Combined 2-panel anisotropy figure (Skin vs Source, same time axis)
+2. Larger/cleaner kriging snapshot (optional)
+3. Conceptual depth-layer schematic with CUC arrow (hand-draw or generate)
+
+---
+
+## 2026-05-04 (session 12) — Gemini Gibbs green-light + RG-Gibbs implementation plan written
+
+### Summary
+Read Gemini's 2026-05-04 verdict in `argo_gemini_actions/AE_gemini_recentactions.md`. Gemini confirmed
+californiav3 Source layer regression fix (8.13% → 3.05% RMSRE, domain-clipping artifact resolved),
+confirmed Source meridional anisotropy as California Undercurrent signature, confirmed Background
+Z-spikes (>9.0) Jan-Feb + Sep 2015 as Pacific Blob non-stationarity events, and **green-lit GibbsKernel
+implementation** with `dist_to_coast` as the coordinate for the learnable sigmoid l(x).
+
+### Plan written
+Saved comprehensive TDD implementation plan to
+`docs/superpowers/plans/2026-05-04-rg-gibbs-kernel.md` (~750 lines, 9 tasks, ~40 bite-sized steps).
+
+### Architecture decisions captured in plan
+- `GibbsKernel` is a self-contained sklearn `Kernel` subclass in `argoebus_gp_physics.py`.
+- Spatial Gibbs (anisotropic 2:1 lat:lon, sigmoid `l(d)` of dist_to_coast_km) × Matern(nu=0.5) in time.
+- Lengthscale: `l(d) = l_min + (l_max - l_min) / (1 + exp(-k*(d - d_0)))`. l_min/l_max fixed
+  (100/400 km), d_0 and k learnable, time_ls learnable in 3D mode. Theta = log-space.
+- X stacked as `[lat_km, lon_km, time_scaled, dist_to_coast_km]` — last col read for lengthscale,
+  never differenced. Lat/lon projected to local km via equirectangular at window centroid.
+- Custom `_gibbs_optimizer` wraps scipy L-BFGS-B with finite-difference gradient (no analytic
+  gradient v1 — kernel signals NotImplementedError if `eval_gradient=True`).
+- Schema already wired: `KernelGibbsBlock` exists in `config_schema.py` with all hyperparameters;
+  runner `dispatch_kwargs` forwards `kernel_type` already. Gap: `run_diagnostic_inspection` swallows
+  `kernel_type` via `**_` (needs to actually use it); runner needs to pack `kernel_gibbs` block as
+  `gibbs_params` dict.
+
+### Files identified for modification (per plan)
+- `ArgoEBUSCloud/ebus_core/argoebus_gp_physics.py` — add GibbsKernel + `_gibbs_optimizer` +
+  `_lonlat_to_local_km`; modify `analyze_rolling_correlations` + `_build_kernel` closure for
+  gibbs branch.
+- `ArgoEBUSCloud/05_ae_update_tomatern0.5.py` — accept `kernel_type` + `gibbs_params` kwargs,
+  swap suffix `_3dmatern_w45` → `_3dgibbs_w45` when `kernel_type='gibbs'`.
+- `ArgoEBUSCloud/ebus_core/runner.py` — pack `KernelGibbsBlock` fields into `gibbs_params` dict
+  in `dispatch_kwargs` when `cfg.gpr.kernel_type == 'gibbs'`.
+- `ArgoEBUSCloud/test_mlops_foundation.py` — add ~10 new tests (sigmoid endpoints, kernel matrix
+  symmetry/PSD/anisotropy, theta round-trip, bounds log-space, clone_with_theta, GP fit smoke,
+  analyze_rolling_correlations gibbs branch, script 05 propagation, runner gibbs packing).
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml` — new (Source layer first run).
+
+### Plan-mode notes for next session
+- User wants approval per project CLAUDE.md hard stops before implementation begins.
+- Two execution options offered: subagent-driven (recommended) or inline `executing-plans`.
+- User switched to Opus 4.7 for plan writing; will re-evaluate model for execution.
+- Next session: verify plan still applies, get user approval, choose execution mode, then
+  begin Task 1 (GibbsKernel skeleton + sigmoid endpoint test).
+
+---
+
 ## 2026-05-03 (session 11) — californiav3 Matérn baseline GPR complete; dist_to_coast Gibbs motivated
 
 ### Summary

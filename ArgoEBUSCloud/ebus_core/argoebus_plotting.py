@@ -19,16 +19,27 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
 
-"""
-PIPELINE: TAKES OUTPUT FROM ArgoGPR.analyze_rolling_correlations()
-
+def plot_kriging_snapshot(
+    df_raw: pd.DataFrame,
+    results_df: pd.DataFrame,
+    target_date: float,
+    # --- CONFIG ---
+    feature_cols: list[str] = ['lat_bin', 'lon_bin'],  # Must match what you ran analysis with
+    target_col: str = 'ohc_per_m',
+    time_col: str = 'time_bin',  # The column name in df_raw
+    window_size_days: float = 90,
+    grid_res: float = 0.5,
+    cmap: str = 'magma_r',
+) -> None:
+    """
+    PIPELINE: TAKES OUTPUT FROM ArgoGPR.analyze_rolling_correlations()
 
     Diagnostic Tool: Reconstructs a GP model for a specific date using TUNED parameters
     and plots a spatial map with error bars.
 
     Unlike 'produce_kriging_map' (which uses a moving neighborhood for mass production),
-    this function performs 'Windowed Global Kriging'. It fits a single GP to ALL data 
-    in the time window. This is ideal for inspecting the physics and quality of your 
+    this function performs 'Windowed Global Kriging'. It fits a single GP to ALL data
+    in the time window. This is ideal for inspecting the physics and quality of your
     tuned parameters, but does not scale to thousands of points.
 
     Parameters:
@@ -44,17 +55,7 @@ PIPELINE: TAKES OUTPUT FROM ArgoGPR.analyze_rolling_correlations()
     grid_res : float
         Resolution of the output map in degrees (e.g., 0.5 deg).
     """
-def plot_kriging_snapshot(df_raw, 
-                          results_df, 
-                          target_date, 
-                          # --- CONFIG ---
-                          feature_cols=['lat_bin', 'lon_bin'], # Must match what you ran analysis with
-                          target_col='ohc_per_m', 
-                          time_col='time_bin',        # The column name in df_raw
-                          window_size_days=90,
-                          grid_res=0.5, 
-                          cmap='magma_r'):
-    
+
     # ---------------------------------------------------------
     # 1. PARAMETER LOOKUP (The Bridge)
     # ---------------------------------------------------------
@@ -193,7 +194,11 @@ def plot_kriging_snapshot(df_raw,
 
     TAKES THE OUTPUT FROM ARGOPPR.analyze_rolling_correlations()
 """
-def plot_physics_history(results_df, cv_details=None, time_unit='days'):
+def plot_physics_history(
+    results_df: pd.DataFrame,
+    cv_details: dict[float, pd.DataFrame] | None = None,
+    time_unit: str = 'days',
+) -> None:
     """
     Visualizes the evolution of Ocean Physics, Model Reliability, and Error Statistics.
     

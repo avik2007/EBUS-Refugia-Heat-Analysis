@@ -1,7 +1,9 @@
 import numpy as np
 import os
+import pandas as pd
+from typing import Any
 
-def get_ebus_registry():
+def get_ebus_registry() -> dict[str, dict[str, Any]]:
     return {
         # THE OLD DEFINITION (For small-scale testing/debugging)
         "california_testbox": {
@@ -66,7 +68,7 @@ def get_ebus_registry():
         }
     }
 
-def get_vertical_layers():
+def get_vertical_layers() -> dict[str, list[int]]:
     # Returns the canonical "Vertical Sandwich" depth layer definitions used
     # throughout the stealth warming analysis.
     #
@@ -86,11 +88,29 @@ def get_vertical_layers():
     }
 
 
-def get_ae_config(region="california", lat_step=0.5, lon_step=0.5, time_step=30.0, 
-                  depth_range=(0, 100), start_date=None, end_date=None):
+def get_ae_config(
+    region: str = "california",
+    lat_step: float = 0.5,
+    lon_step: float = 0.5,
+    time_step: float = 30.0,
+    depth_range: tuple[float, float] = (0, 100),
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict[str, Any]:
     """
     Fetch configuration for a target study site with dynamic resolutions and depth.
     Standardizes naming for S3 files and Coiled clusters.
+
+    region: key into get_ebus_registry() (e.g. "california") selecting the EBUS
+        study domain's lat/lon bounds and default date range.
+    lat_step, lon_step: kriging grid resolution in degrees.
+    time_step: kriging temporal window width in days.
+    depth_range: (min, max) depth in meters defining the vertical layer analyzed
+        (e.g. (150, 400) for the Source Layer).
+    start_date, end_date: ISO date strings "YYYY-MM-DD"; default to the region's
+        registry time window when None.
+    Returns: config dict merging registry bounds, resolved dates, resolutions,
+        depth_range, a generated run_id, and project paths (see get_project_paths).
     """
     registry = get_ebus_registry()
     if region not in registry:
@@ -129,7 +149,7 @@ def get_ae_config(region="california", lat_step=0.5, lon_step=0.5, time_step=30.
     return config
 
 
-def get_project_paths():
+def get_project_paths() -> dict[str, str]:
     """
     Calculates paths to AEResults relative to the ArgoEBUSCloud directory.
     Assumes structure: /ArgoEBUSAnalysis/[ArgoEBUSCloud, AEResults]
@@ -148,7 +168,7 @@ def get_project_paths():
         "models": os.path.join(results_dir, "aemodels")
     }
 
-def ensure_ae_dirs():
+def ensure_ae_dirs() -> None:
     """
     Guarantees project directory tree exists.
     AEResults lives at ArgoEBUSAnalysis/AEResults/, one level above ArgoEBUSCloud/.
@@ -163,7 +183,11 @@ def ensure_ae_dirs():
         path = os.path.join(base_dir, sub)
         os.makedirs(path, exist_ok=True)
 
-def get_float_history(region="california", start_date=None, end_date=None):
+def get_float_history(
+    region: str = "california",
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
     # Retrieve per-dive Argo float positions for a region and date range.
     #
     # The binned OHC parquet (Script 02) only retains one platform_number per bin —
@@ -185,8 +209,6 @@ def get_float_history(region="california", start_date=None, end_date=None):
     #   time_days (float)      - Days since 1999-01-01 (matches OHC parquet baseline)
     #
     # Expect ~14,000 rows for California 2015 (2–10 sec ERDDAP latency).
-    import pandas as pd
-
     registry = get_ebus_registry()
     if region not in registry:
         raise ValueError(f"Region '{region}' not found in registry. Known regions: {list(registry.keys())}")
@@ -260,8 +282,13 @@ def get_float_history(region="california", start_date=None, end_date=None):
     return df[["platform_number", "lat", "lon", "time", "time_days"]]
 
 
-def get_float_history_by_layer(region="california", pres_min=0, pres_max=100,
-                                start_date=None, end_date=None):
+def get_float_history_by_layer(
+    region: str = "california",
+    pres_min: float = 0,
+    pres_max: float = 100,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> pd.DataFrame:
     # Retrieve per-dive Argo float positions filtered to a specific pressure (depth) range.
     #
     # Identical to get_float_history() except that it adds pressure constraints to the
@@ -287,7 +314,6 @@ def get_float_history_by_layer(region="california", pres_min=0, pres_max=100,
     #   lon (float)            - Dive longitude, degrees E
     #   time (datetime, UTC)   - Dive timestamp
     #   time_days (float)      - Days since 1999-01-01 (matches OHC parquet baseline)
-    import pandas as pd
     import io
     import requests
 
@@ -368,11 +394,13 @@ def fmt_dec(x: float) -> str:
     return s.replace(".", "_")
 
 
-def calculate_bin(value, step):
-    """Generic binning helper."""
+def calculate_bin(value: float | np.ndarray, step: float) -> float | np.ndarray:
+    # Snaps value down to the nearest multiple of step (floor binning), e.g. for
+    # assigning a raw coordinate/measurement to a fixed-width grid cell. Accepts
+    # either a scalar or a numpy array since np.floor broadcasts elementwise.
     return np.floor(value / step) * step
 
-def get_coastline_points(resolution='50m'):
+def get_coastline_points(resolution: str = '50m') -> np.ndarray:
     """
     Extracts lon/lat points from Cartopy's coastline feature at a given resolution.
     Returns a (N, 2) numpy array of [longitude, latitude].
@@ -394,7 +422,9 @@ def get_coastline_points(resolution='50m'):
 
     return np.array(points)
 
-def calculate_dist_to_coast(lats, lons, resolution='10m'):
+def calculate_dist_to_coast(
+    lats: np.ndarray, lons: np.ndarray, resolution: str = '10m'
+) -> np.ndarray:
     """
     Calculates the minimum great-circle distance (km) from each (lat, lon) point
     to the nearest coastline vertex.
@@ -443,7 +473,9 @@ def calculate_dist_to_coast(lats, lons, resolution='10m'):
 
     # 5. Compute exact Haversine distance (km) between each query point and its
     # nearest coastline vertex. This is fast: one vectorized pass over N pairs.
-    def haversine(lon1, lat1, lon2, lat2):
+    def haversine(
+        lon1: np.ndarray, lat1: np.ndarray, lon2: np.ndarray, lat2: np.ndarray
+    ) -> np.ndarray:
         lon1, lat1, lon2, lat2 = map(np.radians, [lon1, lat1, lon2, lat2])
         dlon = lon2 - lon1
         dlat = lat2 - lat1

@@ -154,9 +154,11 @@ def build_manifest(
     }
 
 
-def _call_run_diagnostic_inspection(**kwargs):
+def _call_run_diagnostic_inspection(**kwargs: Any) -> Any:
     # Thin shim: defers import of the GPR script so runner.py stays cheap to import.
     # Tests monkeypatch this whole function instead of the real script.
+    # kwargs: forwarded verbatim to script 05's run_diagnostic_inspection; return
+    # is whatever that function returns (normally a dict, see run_analysis below).
     import importlib.util
     import sys
     from pathlib import Path
@@ -181,9 +183,11 @@ def run_analysis(
     manifest_path = aelogs_dir / "manifest.json"
     cfg_hash = config_hash(cfg)
 
-    verdict = check_collision(manifest_path, new_hash=cfg_hash)
+    verdict = "fresh"
     if force_overwrite and aelogs_dir.exists():
         shutil.rmtree(aelogs_dir)
+    else:
+        verdict = check_collision(manifest_path, new_hash=cfg_hash)
 
     aelogs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -214,6 +218,22 @@ def run_analysis(
         dispatch_kwargs["spatial_ls_upper_bound"] = max(
             cfg.gpr.lat_ls_bounds[1], cfg.gpr.lon_ls_bounds[1]
         )
+
+    # When kernel_type='gibbs', forward KernelGibbsBlock fields as a plain dict so
+    # script 05 / analyze_rolling_correlations can construct GibbsKernel without
+    # importing pydantic. Includes anisotropy_lat_lon_ratio_bounds for learnable ratio.
+    if cfg.gpr.kernel_type == 'gibbs' and cfg.gpr.kernel_gibbs is not None:
+        gb = cfg.gpr.kernel_gibbs
+        dispatch_kwargs['gibbs_params'] = {
+            'l_min_km': gb.l_min_km,
+            'l_max_km': gb.l_max_km,
+            'd_transition_init_km': gb.d_transition_init_km,
+            'd_transition_bounds_km': tuple(gb.d_transition_bounds_km),
+            'k_steepness_init': gb.k_steepness_init,
+            'k_steepness_bounds': tuple(gb.k_steepness_bounds),
+            'anisotropy_lat_lon_ratio': gb.anisotropy_lat_lon_ratio,
+            'anisotropy_lat_lon_ratio_bounds': tuple(gb.anisotropy_lat_lon_ratio_bounds),
+        }
 
     t0 = _time.time()
     dispatch_result = _call_run_diagnostic_inspection(**dispatch_kwargs)
@@ -259,9 +279,10 @@ def run_analysis(
 INGESTION_AELOGS_DIR = Path("AEResults/aelogs/ingestion")
 
 
-def _call_run_ingestion(**kwargs):
+def _call_run_ingestion(**kwargs: Any) -> Any:
     # Thin shim around script 02's run_ingestion_pipeline seam.
     # Tests monkeypatch this entire function; production loads the real script.
+    # kwargs: forwarded verbatim to script 02's run_ingestion_pipeline.
     import importlib.util
     import sys
     from pathlib import Path
@@ -291,9 +312,11 @@ def run_ingestion(
     manifest_path = aelogs_dir / "manifest.json"
     cfg_hash = config_hash(cfg)
 
-    verdict = check_collision(manifest_path, new_hash=cfg_hash)
+    verdict = "fresh"
     if force_overwrite and aelogs_dir.exists():
         shutil.rmtree(aelogs_dir)
+    else:
+        verdict = check_collision(manifest_path, new_hash=cfg_hash)
     aelogs_dir.mkdir(parents=True, exist_ok=True)
 
     dispatch_kwargs = {

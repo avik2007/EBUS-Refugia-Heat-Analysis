@@ -1,7 +1,176 @@
-## 2026-05-03 — [ACTIVE] californiav3 Matérn Baseline Run (Path A)
+## 2026-08-30 — [HANDOFF FROM ANTIGRAVITY] Review & Run HLN DM Test + Vertical Delta Analysis
+
+**Priority:** High (Review & Execution).
+Antigravity (science partner) completed the statistical hardening and Vertical Delta script:
+1. **`compare_kernels.py`:** Added Harvey–Leybourne–Newbold (HLN 1997) small-sample modification (`dm_stat_hln`), dynamic lag derivation from rolling window overlap ($h = \lfloor \frac{W - 1}{S} \rfloor = 4$), and Student's $t(N-1)$ p-values. Please review the implementation and run `conda run -n ebus-cloud-env python compare_kernels.py` to verify output across Skin, Source, and Background layers.
+2. **`vertical_delta_analysis.py`:** Created end-to-end Vertical Sandwich Delta analysis script comparing Source (150–400m) vs. Background (500–1000m) dynamics (anisotropy ratio, coastal transition $d_0$, and calibration metrics). Please review the script and run `conda run -n ebus-cloud-env python vertical_delta_analysis.py` to generate the synthesis figures in `AEResults/aeplots/vertical_delta/` and metrics CSV in `AEResults/aelogs/`.
+
+---
+
+## 2026-08-30 — [ACTIVE #-2] Add test coverage for the physics/GPR engine (TOP PRIORITY)
+
+**Priority:** Highest. Do before further kernel tuning or any external-facing claim.
+The whole GPR + thermodynamics core has zero unit coverage — only the MLOps wrapper
+(`test_mlops_foundation.py`, ~66 tests) is tested. `test_pipeline.py` is a live-network
+Dask smoke script, not pytest, and is not wired to CI.
+
+**Why now:** history review (session 2026-08-30) found every serious silent bug landed in
+the untested engine. The `GibbsKernel` `time_ls` units bug (056c34f) corrupted a published
+LinkedIn/interview claim (44d→54d→58d depth trend, since retracted). `lat_ls_bounds`/
+`lon_ls_bounds` were silently ignored for weeks (be013be, Gap 1) — engine used a hardcoded
+default. Neither had a test.
+
+**Priority order for new suites:**
+1. **`GibbsKernel` unit tests** (`argoebus_gp_physics.py`). Pure function, trivial to test.
+   - `k(Δt = half-window)` == `exp(-half_window_days / time_ls)` — the exact units bug (fix
+     added `test_gibbs_kernel_time_ls_converts_normalized_dt_to_days`; extend it).
+   - Gibbs vs Matérn path parity: near-equal `K` when lengthscales set equal; `np.isfinite(K).all()`.
+   - `get_params` / `clone_with_theta` round-trip preserves every constructor arg (incl. `window_size_days`).
+   - PSD check: `K` symmetric, eigenvalues ≥ -1e-8 on a small random `X`.
+2. **`argoebus_thermodynamics.py` golden values.** Highest blast radius, currently unguarded.
+   - Hand-computed T/S/P profile → known OHC in J/m² (assert to tolerance).
+   - Unit check (`units == 'J/m^2'`), monotonicity (warmer water → more OHC).
+   - Depth clipping: `depth_min`/`depth_max` actually respected (the "CRITICAL: Respecting
+     chosen depth" comments in Script 02 mark the anxiety).
+3. **config → dispatch contract tests** (`runner.py`). "Is every config field actually
+   threaded to the engine?" — the Gap 1 class of bug. Bounds present → correct kwarg;
+   null bounds → key absent (be013be already added a version of this — generalise it).
+4. **ERDDAP URL-builder unit test** (`02_ae_cloud_run.py`). Offline, no network.
+   - Assert `>`/`<` encoded as `%3E`/`%3C` (fsspec treats bare ones as glob).
+   - Assert host is `erddap.ifremer.fr` (www→erddap redirect not followed with comparison ops).
+5. **Repo-layout test.** Resolved output dir `== repo_root/AEResults` (lesson #2, commit 74d20c2
+   — silent writes into `ArgoEBUSCloud/AEResults/`).
+6. **Signature-drift test.** Each pipeline entry fn matches `(region, lat_step, lon_step,
+   time_step, depth_range)` (lesson #3).
+
+**Also:** wire `test_pipeline.py` (or a trimmed offline version) into the same pytest run,
+or delete it and replace with a mocked-ERDDAP integration test.
+
+Last updated: 2026-08-30
+
+---
+
+## 2026-07-17 — [ACTIVE #-1] Finish Diebold-Mariano significance test (HLN correction missing)
+
+**Priority:** Resume first next session — pending correctness check before the
+significance claim is used anywhere external-facing (LinkedIn, Gemini briefing, interview prep).
+
+Full findings: `argo_claude_actions/dm_test_review_2026-07-17.md`.
+
+`compare_kernels.py` (Gemini, this session) runs clean and its numbers check out, but it's
+missing half of the methodology agreed in session 18: no small-sample Harvey-Leybourne-Newbold
+(HLN) correction (p-values use standard normal instead of t(N-1), likely overstating
+significance at N=34), and `lag=4` is hardcoded rather than derived from
+`window_size_days/step_size_days − 1` (=3.5 currently).
+
+Next step: add HLN correction + derive lag from config, re-run, and check whether the
+"Gibbs statistically superior on all 3 layers" verdict survives — **Source** layer is the
+one most at risk (closest p-value to 0.05, bootstrap CI already nearly crossing zero).
+
+Last updated: 2026-07-17
+
+---
+
+## 2026-07-17 — [ACTIVE #0] Resume LinkedIn post on Gibbs kernel results
+
+**Status:** Paused mid-session 19, pending the time_ls investigation (now resolved, see #1 below).
+
+Post drafted (RMSRE + Z-std calibration charts built, real-fitted-kernel field/uncertainty
+illustration built — see session 19 recentactions for file paths, all in scratchpad, not yet
+moved into the repo). Core claims (RMSRE down 18–27%, calibration spread ~10x tighter) are
+still valid post-fix. Drop the time-persistence angle entirely — do not resurrect the
+"44d→54d→58d, increasing with depth" framing (see #1 below, session 19 lesson #6).
+
+Next step: decide whether to keep the post as RMSRE + calibration only (2 charts + field
+illustration), or fold in a short "found and fixed a units bug mid-illustration" angle as
+its own point of engineering credibility. Re-generate any charts/images since prior session's
+scratchpad files are ephemeral (session-scoped tmp dir, will not persist).
+
+Last updated: 2026-07-17 (session 19)
+
+---
+
+## 2026-07-17 — [ACTIVE #1] Brief Gemini on Gibbs 3-layer results (time_ls claim CORRECTED session 19)
+
+**Priority:** Do this first next session before any further tuning.
+
+Gemini needs to see the full Gibbs vs Matérn comparison and weigh in on:
+1. **Z-score calibration improvement**: Gibbs collapses std_Z to mean~0.98, std~0.07–0.10 across all layers.
+   Matérn had mean 1.13–1.72, std up to 2.63, max 11.35 (Background Blob windows). Unaffected by
+   session 19's fix — reconfirmed post-fix (see recentactions 2026-07-17).
+2. **RMSRE gains**: Skin 4.25%→3.49%, Source 3.05%→2.54%, Background 2.50%→1.84%. Unaffected by
+   session 19's fix — reconfirmed post-fix (3.71% / 2.63% / 2.03%, same ballpark).
+3. **SUPERSEDED — do NOT brief Gemini on this as stated**: "Time persistence now learnable... Skin
+   44d, Source 54d, Background 58d — increasing with depth" was based on a units bug in `GibbsKernel`
+   (dt normalized vs time_ls in days — see lesson #6 in `AE_claude_lessons.md`). Fixed in session 19.
+   Post-fix, `time_ls` pegs at whatever bound is given (tested to 200d) for the large majority of
+   windows in all 3 layers — it is **not currently resolvable** with a 45-day rolling window. If
+   briefing Gemini on temporal persistence, report it as "≥200d, unresolvable at this window width"
+   for all three layers, not a graded depth trend. Open question for Gemini: is widening
+   `window_size_days` itself (a bigger methodological change, deferred in session 19) worth pursuing
+   to actually resolve this, or is "unresolvable at 45d" itself a usable/interesting finding?
+4. **Remaining convergence warnings** (bounds still being hit):
+   - `d_transition_bounds_km` upper bound 700km saturating on some windows → widen to 1000–1500km?
+   - `anisotropy_lat_lon_ratio` lower bound 1.0 hit on ~40% of Source windows → allow down to 0.5?
+5. **Science verdict**: Is Gibbs ready to be called the canonical kernel? Or more tuning first?
+
+Audit CSVs (original, pre-fix): `AEResults/aelogs/californiav3_..._d{layer}_3dgibbs_w45/audit_*.csv`.
+Audit CSVs (post-fix, session 19): `AEResults/aelogs/californiav3_..._d{layer}_3dgibbs_w45_timelsfix/audit_*.csv`.
+
+Last updated: 2026-07-17 (session 19)
+
+---
+
+## 2026-05-26 — [ACTIVE #2] Update github.io portfolio with Gibbs results
+
+After Gemini sign-off, update `docs/index.html`:
+- Replace Matérn baseline metrics with Gibbs numbers in the Results section
+- Add 3-layer Gibbs vs Matérn comparison table (RMSRE + Z-score)
+- Add new kriging heat map snapshots (Gibbs versions) if visually cleaner
+- Update "What's Next" Gibbs v2 card to reflect implementation complete
+
+Last updated: 2026-05-26 (session 17)
+
+---
+
+## 2026-05-26 — [DONE] Presentation Slides
+
+**Status:** COMPLETE (done before session 17).
+
+Last updated: 2026-05-26 (session 17)
+
+---
+
+## 2026-05-26 — [DONE] Gibbs Post-Implementation: Validate, Scale, Tune
+
+**Status:** COMPLETE (session 17, 2026-05-26).
+- Temporal persistence plot fix: `scale_time_bin` was NaN on gibbs path → now stores `time_ls_days`
+- `--force-overwrite` bug fixed in `runner.py` (verdict unbound, collision raised before delete)
+- `time_ls_bounds_days` widened 45→90d in all 3 gibbs configs
+- Skin + Background gibbs configs created and run
+- Full 3-layer comparison: Gibbs beats Matérn on RMSRE and Z-calibration across all layers
+
+Last updated: 2026-05-26 (session 17)
+
+---
+
+## 2026-05-04 — [DONE] RG-Gibbs Kernel Implementation
+
+**Status:** COMPLETE. All 9 tasks done (session 16, 2026-05-26).
+- `GibbsKernel` in `argoebus_gp_physics.py`: sigmoid l(x), learnable `[d_0, k, time_ls, anisotropy_ratio]`
+- 12 new TDD tests (60 total, 5 pre-existing CLI failures unchanged)
+- `configs/californiav3/californiav3_d150_400_gibbs.yaml` + smoke run: 32/34 pass, RMSRE 2.54%
+- Kriging NaN bug fixed (effective scale at median dist_to_coast stored in `scale_lat_bin/lon_bin`)
+- anisotropy_ratio made learnable (bounds 1.0–4.0); `_gibbs_optimizer` uses scipy L-BFGS-B + jac='2-point'
+
+Last updated: 2026-05-26 (session 16)
+
+---
+
+## 2026-05-03 — [DONE] californiav3 Matérn Baseline Run (Path A)
 
 **Context:** Float census done (09c, committed). californiav3 bounds confirmed in `ae_utils.py`
-(Lat [30,48], Lon [-135,-115]). Gibbs kernel deferred until baseline validates the domain.
+(Lat [30,48], Lon [-135,-115]).
 
 **Steps:**
 1. [x] Write 3 analysis YAMLs + 3 ingestion YAMLs in `configs/californiav3/` — all validate clean.
@@ -14,24 +183,18 @@
        Background 500-1000m: median RMSRE 2.50%, max 3.92%, 35/35 pass. Z chronic low + extreme spikes 11.35, 9.28, 9.11 (Blob onset).
        Domain fix validated: Source improved from 8.13% (californiav2) → 3.05%.
        Cross-layer Z pattern: stationary Matérn cannot adapt near shelf-break — dist_to_coast Gibbs motivated.
-5. [ ] Share results with Gemini for science verdict before proceeding to Gibbs.
-       Key questions:
-       - Confirm Background Z-spikes (9-11) are Pacific Blob onset (Jan-Feb + Sep 2015).
-       - Confirm Background mid-year Ratio >1 (anomalous for deep layer — expected zonal).
-       - Green-light dist_to_coast as l(x) form for GibbsKernel.
+5. [x] Share results with Gemini for science verdict — DONE 2026-05-04. Verdict: Gibbs green-lit
+       with dist_to_coast as l(x) coordinate. Background Z-spikes confirmed as Pacific Blob.
+       See `argo_gemini_actions/AE_gemini_recentactions.md` 2026-05-04 entry.
 
-**Pipeline fixes landed this session (54 tests still passing):**
+**Pipeline fixes landed in session 10 (54 tests still passing):**
 - `02_ae_cloud_run.py`: `run_ingestion_pipeline()` wrapper (absorbs runner extras)
 - `02_ae_cloud_run.py`: ERDDAP URL — encode `>/%3E`, `</%3C`; point to `erddap.ifremer.fr`
 - `02_ae_cloud_run.py`: try/finally cluster cleanup wraps all post-cluster code
 - `02_ae_cloud_run.py`: `client.run(_warm_cartopy_cache)` pre-warms coastline on workers
 - `05_ae_update_tomatern0.5.py`: `**_` absorbs unknown runner kwargs (mode, kernel_type, etc.)
 
-**Gibbs kernel (deferred):** Implement after baseline confirms domain is healthy.
-Spec: `docs/superpowers/specs/2026-04-26-rg-gibbs-l-x-directive.md`
-Gap: `GibbsKernel` class missing from `argoebus_gp_physics.py`; runner dispatch ready.
-
-Last updated: 2026-05-03 (session 10)
+Last updated: 2026-05-04 (session 12)
 
 ---
 

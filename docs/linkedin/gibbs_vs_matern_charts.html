@@ -1,0 +1,294 @@
+<title>Gibbs vs Matérn — RMSRE &amp; Calibration</title>
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-1:      #fcfcfb;
+  --surface-2:      #f2f1ee;
+  --text-primary:   #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted:     #7a7972;
+  --grid:           #e3e2dd;
+  --series-matern:  #2a78d6;
+  --series-gibbs:   #008300;
+  --tooltip-bg:     #ffffff;
+  --tooltip-border: #d8d7d1;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --surface-2:      #232322;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #8f8e86;
+    --grid:           #33322f;
+    --series-matern:  #3987e5;
+    --series-gibbs:   #008300;
+    --tooltip-bg:     #232322;
+    --tooltip-border: #3a3934;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-1:      #1a1a19;
+  --surface-2:      #232322;
+  --text-primary:   #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted:     #8f8e86;
+  --grid:           #33322f;
+  --series-matern:  #3987e5;
+  --series-gibbs:   #008300;
+  --tooltip-bg:     #232322;
+  --tooltip-border: #3a3934;
+}
+
+.viz-root {
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  padding: 32px 24px 40px;
+  max-width: 920px;
+  margin: 0 auto;
+}
+.viz-header { margin-bottom: 28px; }
+.viz-header h1 { font-size: 19px; font-weight: 600; margin: 0 0 4px; }
+.viz-header p { font-size: 13px; color: var(--text-secondary); margin: 0; }
+
+.chart-block { margin-bottom: 44px; }
+.chart-block h2 { font-size: 15px; font-weight: 600; margin: 0 0 2px; }
+.chart-sub { font-size: 12.5px; color: var(--text-secondary); margin: 0 0 14px; }
+
+.legend { display: flex; gap: 18px; margin-bottom: 14px; }
+.legend-item { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
+.legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+.chart-svg-wrap { position: relative; overflow-x: auto; }
+svg { display: block; overflow: visible; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.axis-label { fill: var(--text-muted); font-size: 11px; }
+.group-label { fill: var(--text-secondary); font-size: 12.5px; font-weight: 500; }
+.value-label { fill: var(--text-primary); font-size: 12px; font-weight: 600; }
+.bar { rx: 4; }
+
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--tooltip-bg);
+  border: 1px solid var(--tooltip-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  opacity: 0;
+  transition: opacity 0.1s;
+  white-space: nowrap;
+  z-index: 10;
+}
+.tooltip.visible { opacity: 1; }
+.tooltip .tt-label { color: var(--text-secondary); }
+
+table.data-table {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin-top: 10px;
+  display: none;
+}
+table.data-table.visible { display: table; }
+table.data-table th, table.data-table td {
+  text-align: right;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--grid);
+  font-variant-numeric: tabular-nums;
+}
+table.data-table th:first-child, table.data-table td:first-child { text-align: left; }
+
+.table-toggle {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--grid);
+  border-radius: 4px;
+  padding: 3px 9px;
+  cursor: pointer;
+  margin-top: 4px;
+}
+.table-toggle:hover { background: var(--surface-2); }
+</style>
+
+<div class="viz-root">
+  <div class="viz-header">
+    <h1>Gibbs kernel vs. Matérn — California Current System, 3 depth layers</h1>
+    <p>Cross-validated, 34 rolling windows per layer, 2015. Values verified against audit CSVs (median RMSRE, std of per-window Z-score across windows).</p>
+  </div>
+
+  <div class="chart-block">
+    <h2>Prediction error (RMSRE)</h2>
+    <p class="chart-sub">Lower is better. Median across 34 cross-validation windows per layer.</p>
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--series-matern)"></span>Matérn</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--series-gibbs)"></span>Gibbs</div>
+    </div>
+    <div class="chart-svg-wrap" id="rmsre-wrap">
+      <svg id="rmsre-svg" width="820" height="280" viewBox="0 0 820 280"></svg>
+      <div class="tooltip" id="rmsre-tooltip"></div>
+    </div>
+    <button class="table-toggle" data-target="rmsre-table">Show data table</button>
+    <table class="data-table" id="rmsre-table">
+      <thead><tr><th>Layer</th><th>Matérn RMSRE</th><th>Gibbs RMSRE</th><th>Change</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="chart-block">
+    <h2>Uncertainty calibration (Z-score std across windows)</h2>
+    <p class="chart-sub">Lower is better — measures how consistently the model's stated confidence matches actual error. Log scale: Matérn and Gibbs differ by 10&ndash;30&times;.</p>
+    <div class="legend">
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--series-matern)"></span>Matérn</div>
+      <div class="legend-item"><span class="legend-swatch" style="background:var(--series-gibbs)"></span>Gibbs</div>
+    </div>
+    <div class="chart-svg-wrap" id="calib-wrap">
+      <svg id="calib-svg" width="820" height="300" viewBox="0 0 820 300"></svg>
+      <div class="tooltip" id="calib-tooltip"></div>
+    </div>
+    <button class="table-toggle" data-target="calib-table">Show data table</button>
+    <table class="data-table" id="calib-table">
+      <thead><tr><th>Layer</th><th>Matérn std(Z)</th><th>Gibbs std(Z)</th><th>Tighter by</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  const layers = ["Skin (0–100m)", "Source (150–400m)", "Background (500–1000m)"];
+  const rmsre = {
+    matern: [4.254, 3.047, 2.503],
+    gibbs:  [3.707, 2.634, 2.031],
+  };
+  const calib = {
+    matern: [1.301, 1.054, 2.630],
+    gibbs:  [0.088, 0.083, 0.100],
+  };
+
+  const colorMatern = getComputedStyle(document.querySelector('.viz-root')).getPropertyValue('--series-matern').trim() || '#2a78d6';
+  const colorGibbs = getComputedStyle(document.querySelector('.viz-root')).getPropertyValue('--series-gibbs').trim() || '#008300';
+
+  function svgEl(tag, attrs) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+  }
+
+  function renderGroupedBars(opts) {
+    const { svgId, tooltipId, data, colorA, colorB, valueFmt, yTicks, yMax, yScaleFn, barLabelFmt } = opts;
+    const svg = document.getElementById(svgId);
+    const tooltip = document.getElementById(tooltipId);
+    const W = 820, H = svg.viewBox.baseVal.height;
+    const marginL = 46, marginR = 16, marginT = 18, marginB = 40;
+    const plotW = W - marginL - marginR;
+    const plotH = H - marginT - marginB;
+    const baseline = marginT + plotH;
+
+    // gridlines + y ticks
+    yTicks.forEach(t => {
+      const y = marginT + plotH - yScaleFn(t) * plotH;
+      svg.appendChild(svgEl('line', { class: 'gridline', x1: marginL, x2: marginL + plotW, y1: y, y2: y }));
+      const label = svgEl('text', { class: 'axis-label', x: marginL - 8, y: y + 4, 'text-anchor': 'end' });
+      label.textContent = t;
+      svg.appendChild(label);
+    });
+
+    const groupW = plotW / data.length;
+    const barW = 30, gap = 2;
+
+    data.forEach((d, i) => {
+      const groupCenter = marginL + groupW * i + groupW / 2;
+      const xA = groupCenter - barW - gap / 2;
+      const xB = groupCenter + gap / 2;
+
+      [['A', xA, d.a, colorA], ['B', xB, d.b, colorB]].forEach(([key, x, val, color]) => {
+        const hPx = yScaleFn(val) * plotH;
+        const y = baseline - hPx;
+        const rect = svgEl('rect', {
+          x, y, width: barW, height: Math.max(hPx, 2),
+          rx: 4, ry: 4, fill: color,
+        });
+        svg.appendChild(rect);
+
+        const valLabel = svgEl('text', {
+          class: 'value-label', x: x + barW / 2, y: y - 8, 'text-anchor': 'middle',
+        });
+        valLabel.textContent = barLabelFmt(val);
+        svg.appendChild(valLabel);
+
+        rect.addEventListener('mousemove', (e) => {
+          const wrapRect = rect.closest('.chart-svg-wrap').getBoundingClientRect();
+          tooltip.innerHTML = `<span class="tt-label">${d.layer} — ${key === 'A' ? 'Matérn' : 'Gibbs'}:</span> <strong>${valueFmt(val)}</strong>`;
+          tooltip.style.left = (e.clientX - wrapRect.left + 12) + 'px';
+          tooltip.style.top = (e.clientY - wrapRect.top - 28) + 'px';
+          tooltip.classList.add('visible');
+        });
+        rect.addEventListener('mouseleave', () => tooltip.classList.remove('visible'));
+      });
+
+      const gl = svgEl('text', { class: 'group-label', x: groupCenter, y: baseline + 22, 'text-anchor': 'middle' });
+      gl.textContent = d.layer;
+      svg.appendChild(gl);
+    });
+
+    svg.appendChild(svgEl('line', { class: 'gridline', x1: marginL, x2: marginL + plotW, y1: baseline, y2: baseline }));
+  }
+
+  // Chart 1: RMSRE, linear scale
+  const rmsreData = layers.map((l, i) => ({ layer: l, a: rmsre.matern[i], b: rmsre.gibbs[i] }));
+  const rmsreMax = 5.0;
+  renderGroupedBars({
+    svgId: 'rmsre-svg', tooltipId: 'rmsre-tooltip', data: rmsreData,
+    colorA: colorMatern, colorB: colorGibbs,
+    valueFmt: v => v.toFixed(2) + '%',
+    barLabelFmt: v => v.toFixed(2) + '%',
+    yTicks: [0, 1, 2, 3, 4, 5],
+    yMax: rmsreMax,
+    yScaleFn: v => v / rmsreMax,
+  });
+
+  // Chart 2: calibration, log scale (range ~0.08 to ~2.7)
+  const calibData = layers.map((l, i) => ({ layer: l, a: calib.matern[i], b: calib.gibbs[i] }));
+  const logMin = Math.log10(0.05), logMax = Math.log10(3.0);
+  const logScale = v => (Math.log10(v) - logMin) / (logMax - logMin);
+  renderGroupedBars({
+    svgId: 'calib-svg', tooltipId: 'calib-tooltip', data: calibData,
+    colorA: colorMatern, colorB: colorGibbs,
+    valueFmt: v => v.toFixed(3),
+    barLabelFmt: v => v.toFixed(2),
+    yTicks: [0.1, 1, 3],
+    yMax: 3,
+    yScaleFn: logScale,
+  });
+
+  // Data tables
+  const rmsreBody = document.querySelector('#rmsre-table tbody');
+  rmsreData.forEach(d => {
+    const tr = document.createElement('tr');
+    const changePct = ((d.b - d.a) / d.a * 100).toFixed(1);
+    tr.innerHTML = `<td>${d.layer}</td><td>${d.a.toFixed(2)}%</td><td>${d.b.toFixed(2)}%</td><td>${changePct}%</td>`;
+    rmsreBody.appendChild(tr);
+  });
+  const calibBody = document.querySelector('#calib-table tbody');
+  calibData.forEach(d => {
+    const tr = document.createElement('tr');
+    const factor = (d.a / d.b).toFixed(1);
+    tr.innerHTML = `<td>${d.layer}</td><td>${d.a.toFixed(3)}</td><td>${d.b.toFixed(3)}</td><td>${factor}×</td>`;
+    calibBody.appendChild(tr);
+  });
+
+  document.querySelectorAll('.table-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = document.getElementById(btn.dataset.target);
+      target.classList.toggle('visible');
+      btn.textContent = target.classList.contains('visible') ? 'Hide data table' : 'Show data table';
+    });
+  });
+})();
+</script>

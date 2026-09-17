@@ -1,4 +1,4 @@
-# Gemini Lessons Learned — ArgoEBUSAnalysis
+# Antigravity Lessons Learned — ArgoEBUSAnalysis (formerly Gemini CLI, discontinued 2026-08-30)
 
 ## 2026-04-11: FX2 High-Res Temporal Run (t10_0) Diagnosis
 
@@ -20,3 +20,9 @@
 ### 4. Coastal Distance Feature
 - **Action:** Implemented `calculate_dist_to_coast` using Cartopy and KDTree. Integrated into the preprocessing pipeline (`01_ae_cloud_ingestion.py`, `02_ae_cloud_run.py`, and `ebus_core/argoebus_thermodynamics.py`).
 - **Goal:** Provide a physical coordinate for distance from coast to improve future ML/XGBoost modeling of coastal upwelling.
+
+## 2026-07-07: Reminder — Use Statistical Tests to Gauge Progress
+
+- **REMINDER: USE STATISTICAL TESTS TO GAUGE PROGRESS.**
+- **Finding:** Comparing kernel variants (e.g. Gibbs vs Matern 5/2) by eyeballing median/max RMSRE deltas in the audit CSV overstates confidence — rolling windows overlap (`step_size_days` < `window_size_days`), so per-window RMSRE values are autocorrelated, not independent samples.
+- **Action:** When judging whether a pipeline change (kernel, window size, noise floor, etc.) actually improved results, use a paired significance test that accounts for the overlap — Diebold-Mariano test (HAC/Newey-West variance) on the per-window RMSRE differential, not a plain paired t-test/Wilcoxon and not raw summary-stat comparison.

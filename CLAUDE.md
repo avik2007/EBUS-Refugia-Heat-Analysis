@@ -29,6 +29,12 @@ New pipeline runs should be driven by YAML configs in `configs/<region>/`, not b
 
 ---
 
+## Plan Storage
+
+All Superpowers plans (`writing-plans`, plan-mode/`EnterPlanMode`, `executing-plans`, etc.) for this project go to `.claude/plans/` inside this repo, not the global `~/.claude/plans/`. Keeps plan history with the project instead of mixed into the cross-project global folder.
+
+---
+
 ## Workflow Principles
 
 1. **Plan mode** for any task with 3+ steps or architectural decisions. Re-plan if derailed.
@@ -65,7 +71,7 @@ New pipeline runs should be driven by YAML configs in `configs/<region>/`, not b
 
 ## Scientific Context
 
-- **Gemini**: science planning and hypothesis. **Claude**: implementation and debugging. Don't second-guess the science; flag implementation risks.
+- **Antigravity** (formerly Gemini CLI, discontinued 2026-08-30): science planning and hypothesis. **Claude**: implementation and debugging. Don't second-guess the science; flag implementation risks. Antigravity is keyed to `gemini`-labeled files (`GEMINI.md`, `argo_gemini_actions/`) — those names stay.
 - **Anisotropy Ratio** = `Lat_Scale / Lon_Scale`. < 1.0 = zonal/atm forcing. > 1.0 = meridional current. Should increase with depth.
 - **RMSRE** target < 5%. **Std Z-Score** ideal = 1.0.
 - **run_id naming**: `california_20150101_20151231_res0_5x0_5_t30_0_d0_100` — `d0_100` = Skin, `d150_400` = Source, `d500_1000` = Background.
