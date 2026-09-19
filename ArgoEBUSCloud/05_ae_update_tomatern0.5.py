@@ -59,6 +59,7 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
                               step_size_days=10,
                               kernel_type="matern0.5",
                               gibbs_params=None,
+                              date_start=None, date_end=None,
                               **_):
     # --- 1. SETUP & HOUSEKEEPING ---
     # get_ae_config builds the run_id used to locate the S3 parquet. The S3
@@ -88,7 +89,11 @@ def run_diagnostic_inspection(region="california", lat_step=0.5, lon_step=0.5,
         lat_step=lat_step,
         lon_step=lon_step,
         time_step=time_step,
-        depth_range=depth_range
+        depth_range=depth_range,
+        # Analysis year: selects the run_id (hence the S3 parquet) for that year.
+        # None keeps the registry default window (legacy direct-script behaviour).
+        start_date=date_start.isoformat() if date_start else None,
+        end_date=date_end.isoformat() if date_end else None
     )
 
     # output_run_id is the canonical identifier for THIS run's artifacts.

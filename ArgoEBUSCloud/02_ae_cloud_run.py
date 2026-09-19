@@ -25,7 +25,8 @@ cloud_provider = "aws"
 compute_region = "us-east-1" 
 
 def run_cloud_pipeline(region="california", lat_step=0.5, lon_step=0.5, time_step=30.0, 
-                       depth_range=(0, 100), n_workers=3):
+                       depth_range=(0, 100), n_workers=3,
+                       start_date=None, end_date=None):
     """
     API-based ingestion pipeline using Ifremer ERDDAP.
     Dynamically requests temporal and spatial bounds and applies OHC physics.
@@ -37,9 +38,13 @@ def run_cloud_pipeline(region="california", lat_step=0.5, lon_step=0.5, time_ste
         lat_step=lat_step, 
         lon_step=lon_step, 
         time_step=time_step,
-        depth_range=depth_range
+        depth_range=depth_range,
+        # ISO "YYYY-MM-DD" strings select the ingest year; None keeps the
+        # registry's default window (legacy behaviour for direct script runs).
+        start_date=start_date,
+        end_date=end_date
     )
-    
+
     # Destination path automatically includes the region, dates, resolution, and depth
     output_s3 = f"s3://{config['s3_bucket']}/{config['run_id']}.parquet"
 
@@ -159,6 +164,11 @@ def run_ingestion_pipeline(**kwargs):
         time_step=kwargs.get("time_step", 30.0),
         depth_range=kwargs.get("depth_range", (0, 100)),
         n_workers=kwargs.get("n_workers", 3),
+        # Runner passes datetime.date objects; get_ae_config wants ISO strings.
+        # Without this the config's year was silently replaced by the registry
+        # default (2015) while run_id/manifest still claimed the requested year.
+        start_date=kwargs["date_start"].isoformat() if kwargs.get("date_start") else None,
+        end_date=kwargs["date_end"].isoformat() if kwargs.get("date_end") else None,
     )
     return {}
 

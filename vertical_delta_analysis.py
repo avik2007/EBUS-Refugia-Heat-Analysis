@@ -86,21 +86,26 @@ def load_layer_audits(base_results_dir="AEResults/aelogs", region="californiav3"
             'title': 'Skin Layer (0–100m)',
             'folder': f"{region}_{year}0101_{year}1231_res0_5x0_5_t10_0_d0_100_3dgibbs_w45_timelsfix",
             'thickness_m': 100.0,
-            'color': '#1f77b4'
+            'color': '#1f77b4',
+            'd_transition_bounds_km': (50.0, 700.0)
         },
         'source': {
             'depth_range': (150, 400),
             'title': 'Source Layer (150–400m)',
             'folder': f"{region}_{year}0101_{year}1231_res0_5x0_5_t10_0_d150_400_3dgibbs_w45_timelsfix",
             'thickness_m': 250.0,
-            'color': '#ff7f0e'
+            'color': '#ff7f0e',
+            'd_transition_bounds_km': (50.0, 700.0)
         },
         'background': {
             'depth_range': (500, 1000),
             'title': 'Background Layer (500–1000m)',
-            'folder': f"{region}_{year}0101_{year}1231_res0_5x0_5_t10_0_d500_1000_3dgibbs_w45_timelsfix",
+            # d_transition_bounds_km widened 700->1500km 2026-09-16: prior run's
+            # median d0 was pegged at the 700km bound (optimizer artifact).
+            'folder': f"{region}_{year}0101_{year}1231_res0_5x0_5_t10_0_d500_1000_3dgibbs_w45_timelsfix_d1500",
             'thickness_m': 500.0,
-            'color': '#2ca02c'
+            'color': '#2ca02c',
+            'd_transition_bounds_km': (50.0, 1500.0)
         }
     }
 
@@ -303,6 +308,142 @@ def generate_vertical_delta_plots(layer_data, merged_df, layer_configs, output_d
     print(f"Saved: {fig3_path}")
 
 
+def analyze_d0_distribution(layer_data, layer_configs, output_dir="AEResults/aeplots/vertical_delta",
+                             bound_tol_km=10.0, cv_flag_threshold=0.5):
+    """
+    Checks whether the fitted coastal-transition midpoint d_0 is a stably
+    identified physical parameter per layer, or just noise the optimizer is
+    scattering across the window's rolling-CV fits.
+
+    Physical Meaning:
+    -----------------
+    d_0 is the sigmoid inflection point in the GibbsKernel's length-scale
+    function l(d) = l_min + (l_max - l_min) / (1 + exp(-k*(d - d_0))) --
+    i.e. the distance from the coast where the fitted covariance structure
+    switches from "coastal regime" to "offshore regime". If d_0 is a real,
+    identifiable physical scale (e.g. shelf-break / coastal transition zone
+    width), it should be roughly consistent window-to-window within a layer.
+    If it varies wildly (large coefficient of variation) or a large fraction
+    of windows sit pinned at the config's lower/upper bound, that means the
+    per-window CV fit isn't actually resolving an inflection point -- the
+    likelihood surface is flat/multimodal in d_0 and the optimizer is just
+    landing wherever it started or hit a wall, not "identifying" a coastal
+    transition scale.
+
+    Parameters:
+    -----------
+    layer_data : dict[str, pd.DataFrame]
+        Loaded audit dataframes for skin, source, and background layers.
+    layer_configs : dict
+        Layer metadata, including each layer's configured
+        `d_transition_bounds_km` (lower, upper) tuple.
+    output_dir : str
+        Destination directory for the distribution figure.
+    bound_tol_km : float
+        A window's d_0 counts as "pinned" at a bound if it is within this
+        many km of that bound.
+    cv_flag_threshold : float
+        Coefficient of variation (std/mean) above which a layer's d_0 is
+        flagged as not meaningfully identified.
+
+    Returns:
+    --------
+    pd.DataFrame
+        One row per layer: n, mean, std, cv, median, IQR, min, max, and the
+        fraction of windows pinned at the lower/upper bound.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    rows = []
+    box_data = []
+    box_labels = []
+    box_colors = []
+
+    for key in ['skin', 'source', 'background']:
+        df = layer_data[key]
+        cfg = layer_configs[key]
+        d0 = df['d_transition_km'].dropna()
+        lower, upper = cfg['d_transition_bounds_km']
+        n = len(d0)
+        mean = d0.mean()
+        std = d0.std()
+        cv = std / mean if mean else np.nan
+        frac_lower = (d0 <= lower + bound_tol_km).mean()
+        frac_upper = (d0 >= upper - bound_tol_km).mean()
+        rows.append({
+            'layer': key,
+            'title': cfg['title'],
+            'n_windows': n,
+            'mean_km': mean,
+            'std_km': std,
+            'coefficient_of_variation': cv,
+            'median_km': d0.median(),
+            'iqr_low_km': d0.quantile(0.25),
+            'iqr_high_km': d0.quantile(0.75),
+            'min_km': d0.min(),
+            'max_km': d0.max(),
+            'bound_lower_km': lower,
+            'bound_upper_km': upper,
+            'frac_windows_pinned_lower': frac_lower,
+            'frac_windows_pinned_upper': frac_upper,
+            'identifiable': cv < cv_flag_threshold and (frac_lower + frac_upper) < 0.5
+        })
+        box_data.append(d0.values)
+        box_labels.append(cfg['title'])
+        box_colors.append(cfg['color'])
+
+    stats_df = pd.DataFrame(rows)
+
+    # -------------------------------------------------------------------------
+    # FIGURE: d_0 distribution per layer (boxplot + individual window points)
+    # -------------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=300)
+    bp = ax.boxplot(box_data, tick_labels=box_labels, patch_artist=True, showmeans=True,
+                     meanprops={'marker': 'D', 'markerfacecolor': 'white', 'markeredgecolor': 'black'})
+    for patch, color in zip(bp['boxes'], box_colors):
+        patch.set_facecolor(color)
+        patch.set_alpha(0.35)
+
+    # Jittered individual-window scatter on top of each box, so bimodal/bound-pinned
+    # distributions are visible rather than hidden inside the box summary.
+    rng = np.random.default_rng(0)
+    for i, (key, values) in enumerate(zip(['skin', 'source', 'background'], box_data), start=1):
+        jitter = rng.uniform(-0.12, 0.12, size=len(values))
+        ax.scatter(np.full(len(values), i) + jitter, values, color=layer_configs[key]['color'],
+                   edgecolor='black', linewidth=0.3, s=18, alpha=0.7, zorder=3)
+
+    # Draw each layer's configured bounds as dashed reference lines so pinning is visible.
+    for i, key in enumerate(['skin', 'source', 'background'], start=1):
+        lower, upper = layer_configs[key]['d_transition_bounds_km']
+        ax.hlines([lower, upper], i - 0.3, i + 0.3, colors='red', linestyles=':', linewidth=1.2)
+
+    ax.set_ylabel("Coastal Transition Midpoint $d_0$ (km)", fontsize=11, fontweight='bold')
+    ax.set_title("Is $d_0$ a Stable Physical Scale, or Optimizer Noise?\n"
+                 "Per-window $d_0$ distribution by layer (red dashed = configured bounds)",
+                 fontsize=12, fontweight='bold')
+    ax.grid(True, axis='y', linestyle=':', alpha=0.5)
+    plt.tight_layout()
+    fig_path = os.path.join(output_dir, "vertical_delta_d0_distribution.png")
+    fig.savefig(fig_path)
+    plt.close(fig)
+    print(f"Saved: {fig_path}")
+
+    # Save the stats table alongside the figure for later reference.
+    stats_csv_path = os.path.join(output_dir, "..", "..", "aelogs", "vertical_delta_d0_distribution_stats.csv")
+    stats_csv_path = os.path.normpath(stats_csv_path)
+    stats_df.to_csv(stats_csv_path, index=False)
+    print(f"Saved: {stats_csv_path}")
+
+    print("\n--- d_0 Identifiability Check (per layer) ---")
+    for row in rows:
+        flag = "OK" if row['identifiable'] else "RED FLAG -- not reliably identified"
+        print(f"  {row['title']}: mean={row['mean_km']:.1f}km, std={row['std_km']:.1f}km, "
+              f"CV={row['coefficient_of_variation']:.2f}, "
+              f"pinned_lower={row['frac_windows_pinned_lower']*100:.0f}%, "
+              f"pinned_upper={row['frac_windows_pinned_upper']*100:.0f}%  ==> {flag}")
+
+    return stats_df
+
+
 def run_vertical_delta_analysis(region="californiav3", year=2015):
     """
     Main driver for the Vertical Delta Analysis across the 3 scientific layers.
@@ -336,6 +477,10 @@ def run_vertical_delta_analysis(region="californiav3", year=2015):
 
     # Generate plots
     generate_vertical_delta_plots(layer_data, merged_df, layer_configs, output_dir=output_plots_dir)
+
+    # d_0 identifiability check -- is the coastal-transition midpoint a stable
+    # physical scale per layer, or is the optimizer scattering it window to window?
+    analyze_d0_distribution(layer_data, layer_configs, output_dir=output_plots_dir)
 
     # Print summary statistics
     print("\n" + "=" * 75)
