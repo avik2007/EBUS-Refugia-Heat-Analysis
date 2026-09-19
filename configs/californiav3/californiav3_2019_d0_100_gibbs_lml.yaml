@@ -1,0 +1,54 @@
+schema_version: 1
+config_kind: analysis
+region: californiav3
+date_start: '2019-01-01'
+date_end: '2019-12-31'
+lat_step: 0.5
+lon_step: 0.5
+time_step: 10.0
+depth_range:
+- 0
+- 100
+input:
+  source: s3
+  s3_path: s3://argo-ebus-project-data-abm/californiav3_20190101_20191231_res0_5x0_5_t10_0_d0_100.parquet
+gpr:
+  mode: 3D
+  kernel_type: gibbs
+  window_size_days: 45
+  step_size_days: 10
+  min_bins: 10
+  noise_val: 0.1
+  time_ls_bounds_days:
+  - 15.0
+  - 200.0
+  lat_ls_bounds:
+  - 0.01
+  - 10.0
+  lon_ls_bounds:
+  - 0.01
+  - 5.0
+  run_suffix: "_timelsfix_lml"
+  kernel_gibbs:
+    l_form: sigmoid_dist_to_coast
+    l_min_km: 100.0
+    l_max_km: 400.0
+    d_transition_init_km: 300.0
+    d_transition_bounds_km:
+    - 50.0
+    - 700.0
+    k_steepness_init: 0.01
+    k_steepness_bounds:
+    - 0.0001
+    - 1.0
+    anisotropy_lat_lon_ratio: 2.0
+    anisotropy_lat_lon_ratio_bounds:
+    - 1.0
+    - 4.0
+    climatology_source: roemmich-gilson-v3
+outputs:
+  generate_snapshots: false
+  generate_physics_plots: false
+description: >
+  2019 d0_100 Gibbs run for the d_0 LML identifiability study (records per-window lml).
+  Same kernel/bounds as the _timelsfix config; separate _lml suffix leaves prior outputs untouched.

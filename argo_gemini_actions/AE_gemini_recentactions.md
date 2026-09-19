@@ -2,6 +2,57 @@
 
 ---
 
+## 2026-09-18 — Literature Assessment & Study Queue: Tracer Spectra Power Laws (McCaffrey 2015, Klein 1998, Vallis)
+
+**Action:** Evaluated the tracer spectrum and structure function literature connecting empirical Argo statistics to turbulence theory. Integrated high-priority review and implementation items into `AE_gemini_todo.md` (at the top of Priority 2 / Science Review) and established an active study queue in `References/READING_LIST.md` and `AE_gemini_todo.md` with standing reminders for the user and Antigravity.
+
+### 1. Theoretical Foundations & Power Laws
+* **McCaffrey, Fox-Kemper, and Forget (2015, JPO):** Establishes pair-wise structure functions $D_2(r) = \langle [T(\mathbf{x} + \mathbf{r}) - T(\mathbf{x})]^2 \rangle = 2\gamma(r)$ from Argo floats to estimate tracer spectra and horizontal macroturbulence without gridding bias or optimizer instabilities.
+* **Patrice Klein, Treguier, and Hua (1998, JMR):** Demonstrates that three-dimensional stirring of thermohaline fronts and filamentary strain fields generate a characteristic **$k^{-2}$ power-law tracer variance spectrum** (structure function exponent $\zeta_1 \approx 1$). This provides the dynamical baseline for our shallow Skin layer ($0\text{--}100\,\text{m}$) in the upwelling zone.
+* **Vallis Textbook (*Atmospheric and Oceanic Fluid Dynamics*):** Details canonical power laws for passive/active scalars:
+  * $k^{-1}$ (Batchelor regime: non-local large-scale eddy strain).
+  * $k^{-5/3}$ (Kolmogorov–Obukhov–Corrsin: 3D isotropic / 2D inverse cascade).
+  * $k^{-2}$ (Surface QG / frontogenesis: Klein et al. 1998).
+  * $k^{-3}$ (Charney QG: enstrophy cascade in interior geostrophic macroturbulence).
+
+### 2. Strategic Value for ArgoEBUSAnalysis
+* **Model-Independent Covariance & Lengthscales:** Directly addresses Claude's 2026-09-17 finding of flat marginal-likelihood surfaces in $d_0$ (CV $0.6\text{--}0.74$). Empirical structure functions provide non-parametric covariance and lengthscale priors.
+* **Directional & Coastal Anisotropy:** Decomposing pairs along-shelf vs. cross-shelf and binning by coastal distance $d_{\text{coast}}$ yields empirical ground-truthing for the Undercurrent anisotropy ratio $\mathcal{A}$.
+* **Vertical Sandwich Tracer Statistics:** Comparing spectral slopes across Skin, Source, and Background layers diagnoses the depth transition from frontal submesoscale dynamics ($k^{-2}$) to interior QG macroturbulence ($k^{-3}$) or Batchelor cascades ($k^{-1}$).
+* **Spatio-Temporal Decorrelation ($r, \Delta t$):** Evaluates anomaly persistence without rolling window truncation bias.
+
+### 3. Repository Updates & User Study Queue
+* **Top of Gemini Review (`AE_gemini_todo.md` Priority 2):** Added Science Review on Tracer Spectra, Structure Functions & Power-Law Regimes.
+* **Tracer Structure Function Task:** Updated with explicit references to Klein et al. (1998) and Vallis power laws.
+* **User Reading List:** Added `## Reading List & Study Queue` to `AE_gemini_todo.md` and authored comprehensive reference document `References/READING_LIST.md` with standing instruction to remind the user.
+
+---
+
+## 2026-09-16 — Science Review: Diebold-Mariano HLN Audit & Stealth Warming / MLD Feedback Analysis
+
+**Action:** Conducted rigorous science review of the Diebold–Mariano statistical audit with Harvey–Leybourne–Newbold (HLN 1997) correction, explored the physical coupling between Ekman coastal upwelling and thermocline/pycnocline warming (MLD deepening and $N^2$ erosion), documented findings in `2026-09-16_diebold_mariano_and_stealth_warming_mld_review.md`, authored a comprehensive methodology and proof reference in `diebold_mariano_audit_reference.md`, and formulated non-trivial Argo float implementation tasks for MLD/$N^2$ diagnostics in `AE_gemini_todo.md`.
+
+### 1. Statistical Audit Review (Diebold-Mariano with HLN Finite-Sample Correction)
+* Verified statistical significance of Gibbs non-stationary kernel over stationary Matérn-0.5:
+  * **Skin Layer (0–100m):** $DM^* = 2.864, p = 3.55 \times 10^{-3} < 0.01$ (relative median RMSRE improvement 12.86%).
+  * **Source Layer (150–400m):** $DM^* = 1.840, p = 0.0374 < 0.05$ (relative median RMSRE improvement 13.53%).
+  * **Background Layer (500–1000m):** $DM^* = 4.546, p = 3.65 \times 10^{-5} \ll 0.001$ (relative median RMSRE improvement 18.87%).
+* Confirmed that uncertainty calibration collapse is resolved: Gibbs maintains $\text{Std}(Z) \approx 0.97\text{--}1.00$ ($\sigma \sim 0.08\text{--}0.10$) across all layers.
+
+### 2. Hypothesis Decomposition: Stealth Warming vs. MLD & Pycnocline Stratification
+* Analyzed the dual physical pathways of subsurface warming:
+  1. **Direct Ekman Advection:** Equatorward winds force surface offshore divergence, drawing warm CUC Source water directly onto the shelf, bypassing atmospheric air-sea heat exchange.
+  2. **Entrainment & MLD Deepening:** Upper pycnocline warming reduces $\partial \rho / \partial z$, decreasing buoyancy frequency $N^2$ and lowering the Richardson number $Ri$. Mechanical wind mixing ($u_*^3$) penetrates deeper, deepening the mixed layer and storing larger column heat over extended timescales.
+* Preserved comprehensive analysis in `argo_gemini_actions/2026-09-16_diebold_mariano_and_stealth_warming_mld_review.md`.
+
+### 3. Methodology & Proof Reference
+* Authored `diebold_mariano_audit_reference.md` — comprehensive DM/HLN methodology and proof guide (ML engineer + climate scientist audience).
+
+### 4. Task Planning: Non-Trivial Argo Float MLD & $N^2$ Diagnostics
+* Detailed key challenges in `AE_gemini_todo.md`: missing near-surface data (10 dbar reference depth needed), TEOS-10 ($\Theta, S_A$) potential density calculation, salinity compensation/barrier layers, and discrete differentiation sensor noise requiring adiabatic sorting/smoothing for $N^2$.
+
+---
+
 ## 2026-08-30 — HLN Small-Sample DM Correction & Vertical Delta Analysis Script
 
 **Action:** Onboarded Antigravity agent, completed Harvey–Leybourne–Newbold (HLN 1997) finite-sample correction in `compare_kernels.py`, implemented `vertical_delta_analysis.py`, and handed off to Claude for review and execution.

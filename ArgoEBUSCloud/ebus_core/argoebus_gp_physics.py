@@ -1709,6 +1709,11 @@ def analyze_rolling_correlations(
                 'noise_val': current_noise,
                 'n_bins': n_bins,
                 'n_floats': n_floats,
+                # lml: log-marginal-likelihood of the final fitted GP on this
+                # window's (standardised) training data. Lets the d_0 sweep compare
+                # the free-fit optimum against fits with d_0 clamped elsewhere:
+                # a near-flat LML over d_0 means the data cannot identify d_0.
+                'lml': gp.log_marginal_likelihood_value_,
             }
 
             if kernel_type == 'gibbs':

@@ -47,3 +47,7 @@ proposal_for_claudemd.txt
 # Added by code-review-graph
 .code-review-graph/
 .dual-graph/
+.aider*
+
+# Windows/WSL download metadata
+*:Zone.Identifier

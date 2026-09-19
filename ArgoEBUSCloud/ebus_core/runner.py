@@ -199,6 +199,9 @@ def run_analysis(
         "lon_step": cfg.lon_step,
         "time_step": cfg.time_step,
         "depth_range": cfg.depth_range,
+        # Analysis window: lets script 05 locate the matching year's parquet.
+        "date_start": cfg.date_start,
+        "date_end": cfg.date_end,
         "mode": cfg.gpr.mode,
         "kernel_type": cfg.gpr.kernel_type,
         "window_size_days": cfg.gpr.window_size_days,

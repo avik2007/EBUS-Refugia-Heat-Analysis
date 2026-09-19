@@ -1614,3 +1614,144 @@ def test_analyze_rolling_correlations_gibbs_branch():
     assert 50.0 - 1e-6 <= row['d_transition_km'] <= 700.0
     assert 1e-4 <= row['k_steepness'] <= 1.0
     assert 1.0 <= row['anisotropy_ratio'] <= 4.0
+
+
+# ---------------------------------------------------------------------------
+# Date plumbing: a config for a non-default year must reach get_ae_config.
+# Regression: 02_ae_cloud_run.run_ingestion_pipeline and 05 run_diagnostic_inspection
+# dropped date_start/date_end, so any config silently ran on the registry's 2015
+# window while its run_id/manifest claimed another year.
+# ---------------------------------------------------------------------------
+
+
+def test_run_analysis_dispatch_kwargs_include_dates(tmp_path, monkeypatch):
+    # run_analysis must forward the config's analysis window to the dispatch shim
+    # so script 05 can resolve the matching year's parquet.
+    kwargs = _valid_analysis_kwargs()
+    kwargs["outputs"] = {
+        "aelogs_dir": str(tmp_path / "aelogs"),
+        "aeplots_dir": str(tmp_path / "aeplots"),
+        "generate_snapshots": False,
+        "generate_physics_plots": False,
+    }
+    cfg = AnalysisConfig(**kwargs)
+    captured = {}
+    monkeypatch.setattr(
+        "ebus_core.runner._call_run_diagnostic_inspection",
+        lambda **kw: captured.update(kw) or {},
+    )
+    run_analysis(cfg, registry_path=tmp_path / "registry.jsonl")
+    assert captured["date_start"] == cfg.date_start
+    assert captured["date_end"] == cfg.date_end
+
+
+def _load_script(filename, module_name):
+    # Loads a numbered pipeline script (not importable by name) as a module.
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parent / filename
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_run_ingestion_pipeline_forwards_dates(monkeypatch):
+    # Script 02's runner seam must hand the config dates to run_cloud_pipeline
+    # as ISO strings (the form get_ae_config expects).
+    mod = _load_script("02_ae_cloud_run.py", "script_02_datetest")
+    captured = {}
+    monkeypatch.setattr(mod, "run_cloud_pipeline", lambda **kw: captured.update(kw))
+    mod.run_ingestion_pipeline(
+        region="californiav3",
+        depth_range=(0, 100),
+        date_start=dt.date(2012, 1, 1),
+        date_end=dt.date(2012, 12, 31),
+    )
+    assert captured["start_date"] == "2012-01-01"
+    assert captured["end_date"] == "2012-12-31"
+
+
+def test_run_cloud_pipeline_passes_dates_to_get_ae_config(monkeypatch):
+    # run_cloud_pipeline must pass start/end to get_ae_config; otherwise the S3
+    # key and ERDDAP query silently use the registry default window.
+    mod = _load_script("02_ae_cloud_run.py", "script_02_datetest2")
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def fake_cfg(*a, **kw):
+        captured.update(kw)
+        raise _Stop
+
+    monkeypatch.setattr(mod, "get_ae_config", fake_cfg)
+    with pytest.raises(_Stop):
+        mod.run_cloud_pipeline(
+            region="californiav3", depth_range=(0, 100),
+            start_date="2012-01-01", end_date="2012-12-31",
+        )
+    assert captured["start_date"] == "2012-01-01"
+    assert captured["end_date"] == "2012-12-31"
+
+
+def test_run_diagnostic_inspection_passes_dates_to_get_ae_config(monkeypatch):
+    # Script 05 must resolve the run_id / S3 parquet for the config's year,
+    # not the registry default.
+    mod = _load_script("05_ae_update_tomatern0.5.py", "script_05_datetest")
+    captured = {}
+
+    class _Stop(Exception):
+        pass
+
+    def fake_cfg(*a, **kw):
+        captured.update(kw)
+        raise _Stop
+
+    monkeypatch.setattr(mod, "get_ae_config", fake_cfg)
+    with pytest.raises(_Stop):
+        mod.run_diagnostic_inspection(
+            region="californiav3", depth_range=(0, 100),
+            date_start=dt.date(2012, 1, 1), date_end=dt.date(2012, 12, 31),
+        )
+    assert captured["start_date"] == "2012-01-01"
+    assert captured["end_date"] == "2012-12-31"
+
+
+def test_analyze_rolling_correlations_records_lml():
+    # Each window's record must carry the fitted GP's log-marginal-likelihood
+    # ('lml'), finite, so the d_0 identifiability sweep can compare the free-fit
+    # optimum against LML values with d_0 clamped at other values.
+    import pandas as pd
+    from ebus_core.argoebus_gp_physics import analyze_rolling_correlations
+
+    rng = np.random.default_rng(11)
+    n = 80
+    lat = rng.uniform(33, 45, n)
+    lon = rng.uniform(-130, -118, n)
+    df = pd.DataFrame({
+        'lat_bin': lat, 'lon_bin': lon,
+        'time_bin': rng.uniform(0, 60, n),
+        'dist_to_coast_km': rng.uniform(20, 800, n),
+        'ohc_per_m': 1e9 + 5e6 * lat + 3e6 * lon + rng.normal(0, 1e6, n),
+        'platform_number': rng.integers(1000, 1100, n),
+    })
+    gibbs_params = {
+        'l_min_km': 100.0, 'l_max_km': 400.0,
+        'd_transition_init_km': 300.0,
+        'd_transition_bounds_km': (50.0, 700.0),
+        'k_steepness_init': 0.01,
+        'k_steepness_bounds': (1.0e-4, 1.0),
+        'anisotropy_lat_lon_ratio': 2.0,
+        'anisotropy_lat_lon_ratio_bounds': (1.0, 4.0),
+    }
+    results_df, _ = analyze_rolling_correlations(
+        df=df, feature_cols=['lat_bin', 'lon_bin'],
+        target_col='ohc_per_m', time_col='time_bin',
+        window_size_days=45, step_size_days=10,
+        auto_tune=True, mode='3D', kernel_type='gibbs',
+        gibbs_params=gibbs_params, time_ls_bounds_days=(15.0, 45.0),
+    )
+    assert 'lml' in results_df.columns
+    assert np.isfinite(results_df['lml']).all()
