@@ -1,15 +1,97 @@
-## 2026-08-30 — [HANDOFF FROM ANTIGRAVITY] Review & Run HLN DM Test + Vertical Delta Analysis
+## 2026-09-19 — [TOP] Git cleanup, then spatial moving-window GP pilot (plan approved)
 
-**Priority:** High (Review & Execution).
-Antigravity (science partner) completed the statistical hardening and Vertical Delta script:
-1. **`compare_kernels.py`:** Added Harvey–Leybourne–Newbold (HLN 1997) small-sample modification (`dm_stat_hln`), dynamic lag derivation from rolling window overlap ($h = \lfloor \frac{W - 1}{S} \rfloor = 4$), and Student's $t(N-1)$ p-values. Please review the implementation and run `conda run -n ebus-cloud-env python compare_kernels.py` to verify output across Skin, Source, and Background layers.
-2. **`vertical_delta_analysis.py`:** Created end-to-end Vertical Sandwich Delta analysis script comparing Source (150–400m) vs. Background (500–1000m) dynamics (anisotropy ratio, coastal transition $d_0$, and calibration metrics). Please review the script and run `conda run -n ebus-cloud-env python vertical_delta_analysis.py` to generate the synthesis figures in `AEResults/aeplots/vertical_delta/` and metrics CSV in `AEResults/aelogs/`.
+**Plan file:** `.claude/plans/we-need-to-look-mutable-rabbit.md` (Part A git cleanup steps A0-A5; Part C pilot).
+**Direction change:** user wants d_0 tied to a physical coast-vs-gyre / undercurrent-vs-CCS contrast and to copy
+Kuusela & Stein 2018 (spatial + temporal moving window, stationary local GP, ML per window). Stay Gaussian (their
+Student-t Laplace fit is unstable in places); heavy tails via kurtosis check then optional EM scale-mixture.
+Paper text: extracted with `uv run --with pypdf` from Zotero PDF (not in repo `References/` yet).
+**Deferred by user 2026-09-19:** AWS/Coiled optimizer multi-start test; remaining 32 LML sweeps. Nothing launched.
 
 ---
 
-## 2026-08-30 — [ACTIVE #-2] Add test coverage for the physics/GPR engine (TOP PRIORITY)
 
-**Priority:** Highest. Do before further kernel tuning or any external-facing claim.
+## 2026-09-17 — [#2] `d_transition_km` (d_0) is not a reliably identified parameter — do not report per-layer d_0 medians as a physical claim
+
+**Status 2026-09-18:** multi-year evidence collected, sweep only sanity-run once. Full record in
+`AE_claude_recentactions.md` (2026-09-18 entry). Summary:
+- 2010-2020 x 3 layers (378 windows/layer): pooled CV of d_0 = 0.76 Skin / 0.69 Source / 0.57 Background (per-year
+  0.21-1.14). Windows pinned at lower (50 km) / upper bound: Skin 22% / 15%, Source 25% / 38%, Background 9% / 36%
+  (upper = 1500 km even after widening). Figure `AEResults/aeplots/vertical_delta/d0_distribution_2010_2020.png`,
+  stats `AEResults/aelogs/d0_distribution_multiyear_stats.csv`.
+- LML sweep run for one layer-year only (2015 Source): clamp works; LML is NOT flat (median 9.8 nats swing across
+  the 6-value grid) but no consistent winner (best d_0 counts at 50/100/200/400/800/1500 km = 4/2/4/10/8/6 of 34;
+  14/34 prefer >=800 km, above Source's 700 km bound); 12/34 windows where a clamped fit beats the free fit by
+  >1 nat. So "flat likelihood" is not confirmed as the whole story; optimizer failure is a second suspect (multi-start test deferred 2026-09-19).
+- User goal: d_0 as a structural, fit-improving parameter (not a reported metric) => leading option is a constant
+  or pooled d_0 across layers, decided after the sweep/optimizer evidence.
+
+**Priority:** Highest. Blocks the vertical-fingerprint narrative (Skin/Source coastally-confined
+vs. Background basin-scale) from being used in any external-facing claim until resolved.
+
+**Finding:** Coefficient of variation on `d_transition_km` across the 34 rolling-CV windows is
+0.6–0.74 in **all three layers** (Skin 0.67, Source 0.74, Background 0.61) — window-to-window
+scatter of ±60–75% of the mean. Background still pins 29% of windows at its (already-widened,
+50–1500km) upper bound. Diagnostic added in `vertical_delta_analysis.py`
+(`analyze_d0_distribution()`) flags all 3 layers as "not reliably identified." Full writeup:
+`argo_claude_actions/AE_claude_recentactions.md` (2026-09-17 entry). Evidence:
+`AEResults/aeplots/vertical_delta/vertical_delta_d0_distribution.png`,
+`AEResults/aelogs/vertical_delta_d0_distribution_stats.csv`.
+
+**Why this matters:** same failure class as the `time_ls` units bug (session 19) that already
+retracted one published claim — a per-window optimizer output that looks like a clean physical
+number but isn't actually identified by the data. `AE_gemini_todo.md` line 17 already asserts
+the now-suspect d_0 values as "AUDITED & STATISTICALLY PROVEN" (session 20) — that claim needs
+correcting once science review lands (see `[For Antigravity]` request in `AE_gemini_todo.md`).
+
+**Candidate next steps (need a decision before implementing):**
+1. Not yet made (was in the approved plan, step 6): per-layer LML-vs-d_0 curve plots (normalized per window)
+   under `AEResults/aeplots/d0_sweep/`.
+3. Decide the d_0 treatment: constant d_0 across layers (hard-fix via narrow bounds, or a fixed-parameter option in
+   `GibbsKernel`) vs pooled fit across layers/windows (sum of LML) vs regularize toward a prior. User wants d_0 kept
+   as a structural fit-improving parameter, not reported as a headline metric; anisotropy ratio alone does not give that.
+4. Re-check Skin/Source bounds: Source has 38% of windows at the 700 km upper bound and 14/34 (2015) prefer >=800 km
+   in the sweep — the 700 km bound is likely truncating.
+5. Send the new evidence to Antigravity (existing `[For Antigravity]` science review item in `AE_gemini_todo.md`).
+
+**Config/script changes this session held uncommitted pending this review:**
+`configs/californiav3/californiav3_d500_1000_gibbs_timelsfix.yaml` (bound widened 700→1500km,
+grounded in domain's actual max dist_to_coast of 1404.8km) and `vertical_delta_analysis.py`
+(background folder pointer + new `analyze_d0_distribution()` diagnostic).
+
+---
+
+## 2026-09-18 — [#3] Loose ends from the 2010-2020 d_0 session (small, forward-looking)
+
+1. **Uncommitted work, nothing committed this session:** on branch `fix/restore-antigravity-hln-vertical-delta` —
+   modified `02_ae_cloud_run.py`, `05_ae_update_tomatern0.5.py`, `ebus_core/runner.py`,
+   `ebus_core/argoebus_gp_physics.py`, `test_mlops_foundation.py`, plus older held changes
+   (`configs/californiav3/californiav3_d500_1000_gibbs_timelsfix.yaml`, `vertical_delta_analysis.py`); new untracked:
+   `d0_lml_sweep.py`, `d0_distribution_multiyear.py`, 30 `californiav3_<YYYYMMDD>_<YYYYMMDD>_..._ingest.yaml`,
+   33 `californiav3_<year>_<layer>_gibbs_lml.yaml`, `CONTEXT.md`. Decide commit grouping (date-plumbing fix + tests
+   and `lml` recording are independent of the study scripts/configs) and whether new branches are wanted (hard stop:
+   needs explicit permission).
+2. **Ingest manifests have no S3 info:** `run_ingestion_pipeline` (`02_ae_cloud_run.py`) returns `{}`, so
+   `run_ingestion` records `s3_path: null` and no etag/size (pre-existing). Offered to fix; user has not answered.
+3. **Coiled/Dask ingest flakiness:** 5 of 29 first-pass ingests died with `unpack requires a buffer of N bytes`
+   (N varied: 105712, 416, 50592, 448). Retrying fixed 4; one (d500_1000 2014) failed twice and left a partial write
+   before succeeding when run alone. Root cause not investigated (suspect worker comms/memory with many parallel clusters).
+4. **Signature-drift test** (see [ACTIVE #-2] status): still missing.
+
+---
+
+## 2026-08-30 — [ACTIVE #-2] Add test coverage for the physics/GPR engine (MOSTLY DONE — see status)
+
+**Status 2026-09-18 (verified by grep/git this session; user caught this item was stale):** suites 1-5 below
+already exist — (1) GibbsKernel: 13 `test_gibbs_kernel_*` tests, `ArgoEBUSCloud/test_mlops_foundation.py:1381-1563`;
+(2) thermodynamics: `ArgoEBUSCloud/test_thermodynamics.py` (16 tests; commit 9a40339 "close remaining engine
+test-coverage gaps"); (3) config->dispatch contract: e.g. `test_run_analysis_dispatch_kwargs_full_unconditional_set`;
+(4) ERDDAP URL: `test_erddap_url_uses_correct_host_and_encoding`; (5) repo layout:
+`test_get_project_paths_root_is_repo_root_not_cloud_dir`. **Still open (nothing found by grep):** (6) signature-drift
+test, and the "wire or replace `test_pipeline.py`" note. Suites 1-5 text left below until user confirms it can move to
+recent actions (todo is forward-looking only). Full suite this session: `test_mlops_foundation.py` +
+`test_thermodynamics.py` = 96 passed (run from repo root).
+
+**Priority (original, 2026-08-30):** Highest. Do before further kernel tuning or any external-facing claim.
 The whole GPR + thermodynamics core has zero unit coverage — only the MLOps wrapper
 (`test_mlops_foundation.py`, ~66 tests) is tested. `test_pipeline.py` is a live-network
 Dask smoke script, not pytest, and is not wired to CI.
@@ -313,70 +395,21 @@ Last updated: 2026-04-11
 ---
 
 
-## Priority 1: Diagnose FX2 GPR Results — Gemini Review Required
-
-Cloud run and GPR analysis are complete (2026-04-01). Results are mixed and require
-Gemini science review before proceeding. See `AE_claude_recentactions.md` for full
-output files and per-window tables.
-
-- [x] **Re-run Cloud Ingestion (Script 02) with FX2 High-Res Temporal Resolution** — DONE
-  - `californiav2_20150101_20151231_res0_5x0_5_t10_0_d{0_100, 150_400, 500_1000}.parquet` in S3
-
-- [x] **Execute GPR Analysis (Script 05/07)** — DONE (results problematic, see below)
-
-- [ ] **[For Gemini] Source Layer regression — diagnose root cause**
-  - Source Layer median RMSRE degraded from ~4.2% (t30 baseline) to 8.13% (t10 run).
-  - Only 8/34 windows pass 5% threshold. Max RMSRE 22.09%. Extreme anisotropy ratios
-    (up to 35.75) are non-physical.
-  - Worst windows (day centers): 5952, 6032, 6072, 6082, 6132, 6142, 6152, 6172, 6182, 6192.
-  - Z spike: window 6022 std_z=15.63. Window 6172 std_z=4.48.
-  - Key audit: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45/audit_californiav2_20150101_20151231_res0_5x0_5_t10_0_d150_400_3dmatern_w45.csv`
-  - **Gemini question:** Is the Source Layer degradation from (a) the tighter californiav2
-    domain clipping float trajectories at depth, (b) 10d bins exposing genuine sparsity
-    that 30d bins masked, or (c) a GPR configuration issue?
-
-- [ ] **[For Gemini] scale_time_bin saturates at 45d in all Skin + Source windows**
-  - Every window in Skin and Source hits the `time_ls_bounds_days` upper limit.
-  - No aliasing oscillation (FX2 worked), but still pegged to 45d.
-  - Background layer is healthy: scale_time_bin varies 26–45d in mid-year.
-  - **Gemini question:** Should we widen `time_ls_bounds_days` upper bound for Skin/Source?
-    Or is 45d saturation physically meaningful (ocean memory > window width)?
-
-- [ ] **[For Gemini] Background Layer Z=18.73 spike at window 6102.5 (~Sep 2015)**
-  - RMSRE only 2.67% but std_z=18.73. Likely Pacific Blob peak non-stationarity.
-  - Prior Gemini verdict: genuine physical event, flag if Z > 2.0 persists.
-  - Key audit: `AEResults/aelogs/californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45/audit_californiav2_20150101_20151231_res0_5x0_5_t10_0_d500_1000_3dmatern_w45.csv`
-  - **Gemini question:** Confirm Z=18.73 is the Blob onset. Mark as stationarity violation?
-
----
-
-## Priority 2: Experiments — Temporal Aliasing & Spatial Bounds (Resolved)
-
-- [x] **[For Gemini] Temporal persistence architecture decision**
-  - **Gemini Verdict:** Adopt **FX2 (`time_step=10.0`)**. Structural aliasing at 30d bins is unacceptable for heat-transport fingerprinting. High-res temporal bins will allow us to see the true physical coherence of the Undercurrent.
-- [x] **[For Gemini] Anisotropy vertical profile — flag for science review**
-  - **Gemini Verdict:** Meridional dominance in Skin (Aug-Sep) is physically consistent with the southward CC jet. The vertical fingerprint is confirmed: meridionality persists at depth (Source layer) while zonal dominance only emerges below 500m (Background).
-
-- [ ] **Background Layer window 5955–6000 (May 2015) — Case Study**
-  - Gemini confirms this is a **genuine non-stationarity event** (Pacific Blob onset).
-  - Task: Compare Z-score in the new `t10_0` high-res run; if Z > 2.0 persists, mark as physical violation of stationarity.
-
----
-
 ## Priority 3: Analysis and Comparison
-
-- [ ] **Vertical Delta Comparison Script** (new script, e.g., `04_ae_vertical_compare.py`)
-  - Load audit CSVs from all three depth layers
-  - Plot: OHC trend for each layer on same axes
-  - Plot: Anisotropy Ratio by depth layer over time
-  - Key question: Is Source Layer (150–400m) warming faster than Background (500–1000m)?
 
 - [ ] **Seasonal Anisotropy Report**
   - From the Skin Layer audit, compare Jan vs. Aug Anisotropy Ratios
   - Already partially done: confirmed ratio ~0.36 Jan, ~0.49 Aug from 2015 logs
   - Formalize this into a plot showing ratio vs. month for a full year
 
-- [ ] **SST Cross-Validation: Argo Surface vs. Satellite SST**
+- [ ] **Longer-term Vertical Sandwich Analysis** — extend `vertical_delta_analysis.py`
+  (currently single-year californiav3 2015) to a multi-year time series, Source vs.
+  Background. Scope (year range, whether new multi-year ingestion runs are needed) not
+  yet decided — pending its own approved plan. **Blocks SST cross-validation below** (user
+  decision 2026-09-16: do this first).
+
+- [ ] **SST Cross-Validation: Argo Surface vs. Satellite SST** — **deferred until the
+  longer-term Vertical Sandwich analysis above is done.**
   - Collocate Argo Skin Layer (0–100m) binned temperature against OISST or MUR SST
     for the California region, 2015.
   - **OISST** (NOAA OI, 0.25°/daily, 1981–present): available via ERDDAP at

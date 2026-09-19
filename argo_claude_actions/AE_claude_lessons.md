@@ -51,6 +51,13 @@ Each entry follows this structure:
 - **Rule**: When a kernel/model hyperparameter has physical units (days, km) but operates on a normalized/scaled feature column, grep every reference to that hyperparameter across the file and verify the conversion between the two unit systems actually exists in the code that consumes it — don't assume it does because the units are named correctly in the docstring and constructor. Cross-check against a working sibling implementation (here, the Matérn time-dimension scaling) as a concrete pattern to diff against.
 - **Why**: User caught this during a request for a LinkedIn illustration plot, after independently tracing `GibbsKernel.__call__` line by line while reconstructing the real fitted kernel (not the RBF-proxy `plot_kriging_snapshot` uses). Fixed in `GibbsKernel` (added `window_size_days` constructor param, converts `dt` to days before dividing by `time_ls`; see `test_gibbs_kernel_time_ls_converts_normalized_dt_to_days`). Re-running the fix surfaced a second, separate finding: `time_ls` is not identifiable within a 45-day window regardless of bound (tested up to 200d, all layers still mostly peg at the ceiling) — a window-design limitation, not a units bug. Report `time_ls_days` as a floor ("≥200d, unresolvable within this window") for all three californiav3 Gibbs layers until window design is revisited; the depth-trend claim from session 17 no longer holds and should not be reused.
 
+### 7. Presented a stale todo item as pending work without checking git/tests
+
+- **Mistake** (2026-09-18): asked to show the top of the todo list, I repeated `[ACTIVE #-2]` ("add GibbsKernel unit tests first") as the next thing to do. The tests already existed (13 `test_gibbs_kernel_*` in `test_mlops_foundation.py:1381-1563`; thermodynamics suite and others landed in commit 9a40339). The todo entry was written 2026-08-30 and never reconciled. User: "DIDN'T WE ALREADY DO THE GIBBS KERNEL TESTS? Check git diff if you need."
+- **Related slip:** in the same session I said `AE_gemini_todo.md` still asserted the d_0 values as proven, without reading that line; the d_0 bullet had already been retracted there on 2026-09-17.
+- **Rule**: before presenting a todo item as pending or recommending it as next, check `git log` and grep the tests/code for evidence it is already done, and read any doc line before characterising what it says. Cite the evidence (test names + line numbers, commit hash). Todo entries older than the last few commits are suspect by default.
+- **Why**: a todo list is a snapshot; git and the test files are the truth. Re-proposing done work wastes the user's attention and erodes trust in the list.
+
 ---
 
 _Update this file immediately after any user correction._

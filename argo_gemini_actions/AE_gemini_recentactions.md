@@ -2,6 +2,32 @@
 
 ---
 
+## 2026-09-18 — Literature Assessment & Study Queue: Tracer Spectra Power Laws (McCaffrey 2015, Klein 1998, Vallis)
+
+**Action:** Evaluated the tracer spectrum and structure function literature connecting empirical Argo statistics to turbulence theory. Integrated high-priority review and implementation items into `AE_gemini_todo.md` (at the top of Priority 2 / Science Review) and established an active study queue in `References/READING_LIST.md` and `AE_gemini_todo.md` with standing reminders for the user and Antigravity.
+
+### 1. Theoretical Foundations & Power Laws
+* **McCaffrey, Fox-Kemper, and Forget (2015, JPO):** Establishes pair-wise structure functions $D_2(r) = \langle [T(\mathbf{x} + \mathbf{r}) - T(\mathbf{x})]^2 \rangle = 2\gamma(r)$ from Argo floats to estimate tracer spectra and horizontal macroturbulence without gridding bias or optimizer instabilities.
+* **Patrice Klein, Treguier, and Hua (1998, JMR):** Demonstrates that three-dimensional stirring of thermohaline fronts and filamentary strain fields generate a characteristic **$k^{-2}$ power-law tracer variance spectrum** (structure function exponent $\zeta_1 \approx 1$). This provides the dynamical baseline for our shallow Skin layer ($0\text{--}100\,\text{m}$) in the upwelling zone.
+* **Vallis Textbook (*Atmospheric and Oceanic Fluid Dynamics*):** Details canonical power laws for passive/active scalars:
+  * $k^{-1}$ (Batchelor regime: non-local large-scale eddy strain).
+  * $k^{-5/3}$ (Kolmogorov–Obukhov–Corrsin: 3D isotropic / 2D inverse cascade).
+  * $k^{-2}$ (Surface QG / frontogenesis: Klein et al. 1998).
+  * $k^{-3}$ (Charney QG: enstrophy cascade in interior geostrophic macroturbulence).
+
+### 2. Strategic Value for ArgoEBUSAnalysis
+* **Model-Independent Covariance & Lengthscales:** Directly addresses Claude's 2026-09-17 finding of flat marginal-likelihood surfaces in $d_0$ (CV $0.6\text{--}0.74$). Empirical structure functions provide non-parametric covariance and lengthscale priors.
+* **Directional & Coastal Anisotropy:** Decomposing pairs along-shelf vs. cross-shelf and binning by coastal distance $d_{\text{coast}}$ yields empirical ground-truthing for the Undercurrent anisotropy ratio $\mathcal{A}$.
+* **Vertical Sandwich Tracer Statistics:** Comparing spectral slopes across Skin, Source, and Background layers diagnoses the depth transition from frontal submesoscale dynamics ($k^{-2}$) to interior QG macroturbulence ($k^{-3}$) or Batchelor cascades ($k^{-1}$).
+* **Spatio-Temporal Decorrelation ($r, \Delta t$):** Evaluates anomaly persistence without rolling window truncation bias.
+
+### 3. Repository Updates & User Study Queue
+* **Top of Gemini Review (`AE_gemini_todo.md` Priority 2):** Added Science Review on Tracer Spectra, Structure Functions & Power-Law Regimes.
+* **Tracer Structure Function Task:** Updated with explicit references to Klein et al. (1998) and Vallis power laws.
+* **User Reading List:** Added `## Reading List & Study Queue` to `AE_gemini_todo.md` and authored comprehensive reference document `References/READING_LIST.md` with standing instruction to remind the user.
+
+---
+
 ## 2026-09-16 — Science Review: Diebold-Mariano HLN Audit & Stealth Warming / MLD Feedback Analysis
 
 **Action:** Conducted rigorous science review of the Diebold–Mariano statistical audit with Harvey–Leybourne–Newbold (HLN 1997) correction, explored the physical coupling between Ekman coastal upwelling and thermocline/pycnocline warming (MLD deepening and $N^2$ erosion), documented findings in `2026-09-16_diebold_mariano_and_stealth_warming_mld_review.md`, authored a comprehensive methodology and proof reference in `diebold_mariano_audit_reference.md`, and formulated non-trivial Argo float implementation tasks for MLD/$N^2$ diagnostics in `AE_gemini_todo.md`.

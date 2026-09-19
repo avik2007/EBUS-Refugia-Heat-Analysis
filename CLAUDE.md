@@ -109,6 +109,8 @@ Key directories:
 
 **Completed tasks leave `AE_claude_todo.md`**: record them in `AE_claude_recentactions.md`. Todo = forward-looking only.
 
+**Verify a todo item is still open before presenting it**: check `git log` and grep the tests/code, and cite the evidence (test names, commit). Todo entries go stale (e.g. the GibbsKernel tests were listed as pending after they existed — lesson #7).
+
 **`/interrupt` command**: type `/interrupt` at any time to halt execution and write a checkpoint to `argo_claude_actions/checkpoint.md`. Resumes cleanly in the next message.
 
 **`AEResults/` is at `ArgoEBUSAnalysis/`**, not inside `ArgoEBUSCloud/`. Paths must traverse up: `os.path.join(base_dir, "..", "AEResults", ...)`.
